@@ -1,0 +1,126 @@
+# ========================
+# OS Generated Files
+# ========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ========================
+# AI Context (local only)
+# ========================
+AIREAD.md
+
+# ========================
+# IDE / Editor
+# ========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ========================
+# Java / Maven / Gradle
+# ========================
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+build/
+!gradle-wrapper.jar
+
+# ========================
+# Node.js / Frontend
+# ========================
+node_modules/
+.next/
+out/
+.nuxt/
+.cache/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ========================
+# C++ / CMake
+# ========================
+cmake-build-*/
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.exe
+*.a
+*.lib
+*.pdb
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# ========================
+# Docker
+# ========================
+docker-compose.override.yml
+
+# ========================
+# Database / Storage
+# ========================
+*.db
+*.sqlite
+*.sqlite3
+pgdata/
+minio-data/
+
+# ========================
+# Logs
+# ========================
+logs/
+*.log
+
+# ========================
+# Secrets
+# ========================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+
+# ========================
+# Misc
+# ========================
+*.bak
+*.tmp
+*.temp
+coverage/

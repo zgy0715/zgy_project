@@ -1,0 +1,45 @@
+# Development environment configuration
+spring:
+  # PostgreSQL - local development
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:deepagent_dev}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+
+  # JPA - show SQL in development
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # Flyway - clean in development
+  flyway:
+    clean-disabled: false
+
+# JWT - shorter expiration for development
+jwt:
+  access-token-expiration: 7200000
+  refresh-token-expiration: 172800000
+
+# Logging - verbose in development
+logging:
+  level:
+    root: INFO
+    com.deepagent: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+
+# Actuator - expose all endpoints in dev
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"

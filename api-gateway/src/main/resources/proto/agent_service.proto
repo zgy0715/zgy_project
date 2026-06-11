@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package deepagent.v1;
+
+option java_multiple_files = true;
+option java_package = "com.deepagent.grpc";
+
+// Agent service definition for communication between Java gateway and Python agent service.
+// The Python agent service implements this service to handle agent task execution.
+service AgentService {
+
+  // Execute a single agent task synchronously.
+  // Returns the complete result after the agent finishes execution.
+  rpc ExecuteTask(AgentTaskRequest) returns (AgentTaskResponse);
+
+  // Execute an agent task with server-side streaming.
+  // Streams output chunks as they are produced by the agent.
+  rpc ExecuteTaskStream(AgentTaskRequest) returns (stream AgentOutputChunk);
+
+  // Check the health of the agent service.
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Request message for submitting an agent task.
+message AgentTaskRequest {
+  int64 project_id = 1;
+  int64 task_id = 2;
+  string agent_type = 3;
+  string input = 4;
+  bool stream = 5;
+  map<string, string> metadata = 6;
+}
+
+// Response message for a completed agent task.
+message AgentTaskResponse {
+  int64 task_id = 1;
+  int64 project_id = 2;
+  string agent_type = 3;
+  TaskStatus status = 4;
+  string output = 5;
+  string error = 6;
+  int64 started_at_ms = 7;
+  int64 completed_at_ms = 8;
+}
+
+// Streaming output chunk from an agent task.
+message AgentOutputChunk {
+  int64 task_id = 1;
+  int64 project_id = 2;
+  OutputType type = 3;
+  string content = 4;
+  int64 timestamp_ms = 5;
+
+  enum OutputType {
+    OUTPUT_TYPE_UNSPECIFIED = 0;
+    STDOUT = 1;
+    STDERR = 2;
+    PROGRESS = 3;
+    RESULT = 4;
+    ERROR = 5;
+  }
+}
+
+// Task status enumeration.
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  RUNNING = 2;
+  SUCCESS = 3;
+  FAILED = 4;
+  CANCELLED = 5;
+}
+
+// Health check request (empty).
+message HealthCheckRequest {}
+
+// Health check response.
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  int64 uptime_ms = 3;
+}

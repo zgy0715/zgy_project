@@ -1,0 +1,76 @@
+# Production environment configuration
+spring:
+  # PostgreSQL - production
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 30
+      minimum-idle: 10
+      idle-timeout: 600000
+      connection-timeout: 30000
+      max-lifetime: 1800000
+
+  # JPA - no SQL logging in production
+  jpa:
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # Flyway - strict in production
+  flyway:
+    clean-disabled: true
+
+  # Redis - production connection
+  data:
+    redis:
+      password: ${REDIS_PASSWORD}
+      lettuce:
+        pool:
+          max-active: 30
+          max-idle: 15
+          min-idle: 10
+
+  # RabbitMQ - production connection
+  rabbitmq:
+    username: ${RABBITMQ_USERNAME}
+    password: ${RABBITMQ_PASSWORD}
+
+# JWT - production expiration
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:1800000}
+  refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:86400000}
+
+# gRPC - production TLS
+grpc:
+  client:
+    agent-service:
+      host: ${GRPC_AGENT_HOST}
+      port: ${GRPC_AGENT_PORT:50051}
+      enable-keep-alive: true
+
+# Logging - minimal in production
+logging:
+  level:
+    root: WARN
+    com.deepagent: INFO
+    org.springframework.security: WARN
+    org.hibernate.SQL: WARN
+
+# Actuator - limited in production
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      show-details: never

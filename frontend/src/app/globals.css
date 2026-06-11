@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 238.7 83.5% 66.7%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 238.7 83.5% 66.7%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-surface-0 text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .border-border {
+    border-color: hsl(var(--border));
+  }
+  .text-foreground {
+    color: hsl(var(--foreground));
+  }
+
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted));
+    border-radius: 3px;
+  }
+
+  /* React Flow overrides */
+  .react-flow__background {
+    background-color: hsl(var(--background)) !important;
+  }
+  .react-flow__minimap {
+    background-color: hsl(var(--card)) !important;
+    border: 1px solid hsl(var(--border)) !important;
+    border-radius: var(--radius) !important;
+  }
+  .react-flow__controls {
+    border: 1px solid hsl(var(--border)) !important;
+    border-radius: var(--radius) !important;
+  }
+  .react-flow__controls-button {
+    background-color: hsl(var(--card)) !important;
+    border-color: hsl(var(--border)) !important;
+    fill: hsl(var(--foreground)) !important;
+  }
+  .react-flow__controls-button:hover {
+    background-color: hsl(var(--accent)) !important;
+  }
+
+  /* Monaco editor overrides */
+  .monaco-editor .margin {
+    background-color: hsl(var(--background)) !important;
+  }
+}

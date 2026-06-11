@@ -1,0 +1,152 @@
+version: "3.9"
+
+services:
+  # ========================
+  # Databases & Message Queue
+  # ========================
+  postgres:
+    image: postgres:16-alpine
+    container_name: deepagent-postgres
+    environment:
+      POSTGRES_DB: deepagent
+      POSTGRES_USER: deepagent
+      POSTGRES_PASSWORD: deepagent_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: deepagent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: deepagent-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: deepagent
+      RABBITMQ_DEFAULT_PASS: deepagent_secret
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: deepagent-minio
+    environment:
+      MINIO_ROOT_USER: deepagent
+      MINIO_ROOT_PASSWORD: deepagent_secret
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ========================
+  # Application Services
+  # ========================
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: deepagent-api-gateway
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/deepagent
+      SPRING_DATASOURCE_USERNAME: deepagent
+      SPRING_DATASOURCE_PASSWORD: deepagent_secret
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_RABBITMQ_HOST: rabbitmq
+      AGENT_RUNTIME_HOST: agent-runtime
+      AGENT_RUNTIME_PORT: 50051
+      JWT_SECRET: change-this-in-production
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  agent-runtime:
+    build:
+      context: ./agent-runtime
+      dockerfile: Dockerfile
+    container_name: deepagent-agent-runtime
+    environment:
+      DATABASE_URL: postgresql://deepagent:deepagent_secret@postgres:5432/deepagent
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://deepagent:deepagent_secret@rabbitmq:5672/
+      LLM_PROVIDER: openai
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder}
+      VECTOR_ENGINE_LIBRARY: /app/vector_engine_bindings.so
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    volumes:
+      - vector-engine-lib:/app/lib
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: deepagent-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_WS_URL: ws://localhost:8080/ws
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+# ========================
+# Volumes
+# ========================
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  rabbitmqdata:
+    driver: local
+  miniodata:
+    driver: local
+  vector-engine-lib:
+    driver: local
