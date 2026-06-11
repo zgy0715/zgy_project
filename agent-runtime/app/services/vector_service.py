@@ -1,11 +1,26 @@
 """Vector engine service for semantic search via pybind11 or HTTP."""
 
+import asyncio
 import logging
 from typing import Any
+
+import httpx
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Short timeouts for development when engine may not be running
+_HTTP_TIMEOUT = httpx.Timeout(10.0, connect=2.0)
+
+
+def _make_client(timeout: httpx.Timeout = _HTTP_TIMEOUT) -> httpx.AsyncClient:
+    """Create an httpx AsyncClient with SSL verification disabled (for local dev)."""
+    try:
+        return httpx.AsyncClient(timeout=timeout, verify=False)
+    except Exception as exc:
+        logger.warning("Failed to create httpx client with SSL: %s", exc)
+        return httpx.AsyncClient(timeout=timeout, verify=False)
 
 
 class VectorService:
@@ -55,9 +70,7 @@ class VectorService:
             return self._native_engine.embed(text)
 
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with _make_client() as client:
                 response = await client.post(
                     f"{self._engine_url}/api/v1/embed",
                     json={"text": text, "model": self._embedding_model},
@@ -70,7 +83,7 @@ class VectorService:
             return embedding
 
         except Exception as e:
-            logger.error("Embedding generation failed: %s", str(e))
+            logger.warning("Embedding generation failed: %s (using zero vector)", str(e)[:80])
             # Return zero vector as fallback
             return [0.0] * self._embedding_dim
 
@@ -87,9 +100,7 @@ class VectorService:
             return self._native_engine.embed_batch(texts)
 
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with _make_client() as client:
                 response = await client.post(
                     f"{self._engine_url}/api/v1/embed/batch",
                     json={"texts": texts, "model": self._embedding_model},
@@ -121,9 +132,7 @@ class VectorService:
             return self._native_engine.index(documents, collection)
 
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with _make_client(httpx.Timeout(30.0, connect=2.0)) as client:
                 response = await client.post(
                     f"{self._engine_url}/api/v1/index",
                     json={
@@ -165,9 +174,7 @@ class VectorService:
             return self._native_engine.search(query, top_k, collection, filters)
 
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with _make_client() as client:
                 response = await client.post(
                     f"{self._engine_url}/api/v1/search",
                     json={

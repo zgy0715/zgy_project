@@ -4,7 +4,8 @@ import logging
 from typing import Any
 
 from app.agents.base import BaseAgent
-from app.models.enums import AgentType
+from app.models.enums import AgentType, MessageRole
+from app.models.schemas import Message
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class TesterAgent(BaseAgent):
         return AgentType.TESTER
 
     async def plan(self, task: str, context: dict[str, Any]) -> str:
-        """Create a test generation plan.
+        """Create a test generation plan using the LLM.
 
         Analyzes the code to determine what tests are needed,
         what scenarios to cover, and what testing patterns to use.
@@ -57,20 +58,30 @@ class TesterAgent(BaseAgent):
         """
         logger.info("TesterAgent '%s' planning test generation: %s", self.name, task)
 
-        # TODO: Integrate with LLM service for plan generation
-        plan = (
-            f"Test generation plan for: {task}\n"
-            f"1. Analyze the target code for testable units\n"
-            f"2. Identify test scenarios (happy path, edge cases, errors)\n"
-            f"3. Design test structure and fixtures\n"
-            f"4. Generate unit tests with appropriate assertions\n"
-            f"5. Add integration tests if needed"
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=TESTER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Create a test generation plan for the following task.\n\n"
+                f"Task: {task}\n"
+                f"Context: {context}\n\n"
+                f"Outline:\n"
+                f"1. Testable units and components to test\n"
+                f"2. Test scenarios (happy path, edge cases, errors)\n"
+                f"3. Test structure and fixtures needed\n"
+                f"4. Mocking strategy for external dependencies"
+            )),
+        ]
+
+        plan = await self.llm.complete(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2048,
         )
 
         return plan
 
     async def execute(self, plan: str, context: dict[str, Any]) -> str:
-        """Execute the test generation plan.
+        """Execute the test generation plan using the LLM.
 
         Generates test code using available tools and the LLM.
 
@@ -79,29 +90,45 @@ class TesterAgent(BaseAgent):
             context: Additional context for test generation.
 
         Returns:
-            A description of the generated tests.
+            The generated test code.
         """
         logger.info("TesterAgent '%s' executing test plan", self.name)
 
-        # TODO: Integrate with LLM service and tools for actual test generation
-        execution_result = (
-            f"Executed test generation plan:\n{plan}\n\n"
-            f"Generated test suite (placeholder):\n"
-            f"- Unit tests for core functions\n"
-            f"- Edge case coverage\n"
-            f"- Error handling tests"
+        code_under_test = context.get("code", "")
+
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=TESTER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Generate comprehensive tests based on the following plan.\n\n"
+                f"Plan: {plan}\n"
+                f"{'Code under test:\n' + code_under_test if code_under_test else ''}\n"
+                f"Context: {context}\n\n"
+                f"Requirements:\n"
+                f"- Use the appropriate test framework (pytest, unittest, jest, etc.)\n"
+                f"- Follow AAA pattern (Arrange, Act, Assert)\n"
+                f"- Cover happy path, edge cases, and error conditions\n"
+                f"- Use meaningful test names\n"
+                f"- Include comments explaining test scenarios"
+            )),
+        ]
+
+        test_code = await self.llm.complete(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=8192,
         )
 
         self.artifacts.append({
             "type": "test_generation",
             "plan": plan,
             "status": "completed",
+            "output_length": len(test_code),
         })
 
-        return execution_result
+        return test_code
 
     async def reflect(self, execution_result: str) -> str:
-        """Reflect on generated tests for coverage and quality.
+        """Reflect on generated tests for coverage and quality using the LLM.
 
         Ensures the generated tests are comprehensive, correct,
         and follow testing best practices.
@@ -114,10 +141,24 @@ class TesterAgent(BaseAgent):
         """
         logger.info("TesterAgent '%s' reflecting on test quality", self.name)
 
-        # TODO: Integrate with LLM service for test quality reflection
-        reflection = (
-            f"Test quality review:\n{execution_result}\n\n"
-            f"Coverage and quality verified (placeholder)."
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=TESTER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Review the following generated tests for quality and coverage.\n\n"
+                f"Generated tests:\n{execution_result}\n\n"
+                f"Check:\n"
+                f"1. Coverage — are all important scenarios covered?\n"
+                f"2. Correctness — will the tests actually pass?\n"
+                f"3. Isolation — are tests independent of each other?\n"
+                f"4. Maintainability — are tests clear and well-structured?\n\n"
+                f"Output improved tests if issues are found, or confirm quality."
+            )),
+        ]
+
+        reflection = await self.llm.complete(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=4096,
         )
 
         return reflection

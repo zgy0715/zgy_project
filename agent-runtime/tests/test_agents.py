@@ -65,15 +65,15 @@ class TestCoderAgent:
 class TestReviewerAgent:
     """Tests for the ReviewerAgent class."""
 
-    def test_agent_type(self) -> None:
+    def test_agent_type(self, mock_llm_service: AsyncMock) -> None:
         """Test that ReviewerAgent returns the correct agent type."""
-        agent = ReviewerAgent(name="test-reviewer")
+        agent = ReviewerAgent(name="test-reviewer", llm_service=mock_llm_service)
         assert agent.agent_type == AgentType.REVIEWER
 
     @pytest.mark.asyncio
-    async def test_run(self) -> None:
-        """Test ReviewerAgent full lifecycle."""
-        agent = ReviewerAgent(name="test-reviewer")
+    async def test_run(self, mock_llm_service: AsyncMock) -> None:
+        """Test ReviewerAgent full lifecycle with mocked LLM."""
+        agent = ReviewerAgent(name="test-reviewer", llm_service=mock_llm_service)
         result = await agent.run("Review this code")
         assert isinstance(result, str)
         assert agent.status == TaskStatus.COMPLETED
@@ -82,15 +82,15 @@ class TestReviewerAgent:
 class TestTesterAgent:
     """Tests for the TesterAgent class."""
 
-    def test_agent_type(self) -> None:
+    def test_agent_type(self, mock_llm_service: AsyncMock) -> None:
         """Test that TesterAgent returns the correct agent type."""
-        agent = TesterAgent(name="test-tester")
+        agent = TesterAgent(name="test-tester", llm_service=mock_llm_service)
         assert agent.agent_type == AgentType.TESTER
 
     @pytest.mark.asyncio
-    async def test_run(self) -> None:
-        """Test TesterAgent full lifecycle."""
-        agent = TesterAgent(name="test-tester")
+    async def test_run(self, mock_llm_service: AsyncMock) -> None:
+        """Test TesterAgent full lifecycle with mocked LLM."""
+        agent = TesterAgent(name="test-tester", llm_service=mock_llm_service)
         result = await agent.run("Generate tests for this code")
         assert isinstance(result, str)
         assert agent.status == TaskStatus.COMPLETED
@@ -99,15 +99,15 @@ class TestTesterAgent:
 class TestDeployerAgent:
     """Tests for the DeployerAgent class."""
 
-    def test_agent_type(self) -> None:
+    def test_agent_type(self, mock_llm_service: AsyncMock) -> None:
         """Test that DeployerAgent returns the correct agent type."""
-        agent = DeployerAgent(name="test-deployer")
+        agent = DeployerAgent(name="test-deployer", llm_service=mock_llm_service)
         assert agent.agent_type == AgentType.DEPLOYER
 
     @pytest.mark.asyncio
-    async def test_run(self) -> None:
-        """Test DeployerAgent full lifecycle."""
-        agent = DeployerAgent(name="test-deployer")
+    async def test_run(self, mock_llm_service: AsyncMock) -> None:
+        """Test DeployerAgent full lifecycle with mocked LLM."""
+        agent = DeployerAgent(name="test-deployer", llm_service=mock_llm_service)
         result = await agent.run("Generate deployment config")
         assert isinstance(result, str)
         assert agent.status == TaskStatus.COMPLETED

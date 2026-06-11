@@ -54,7 +54,7 @@ class CodeSearchTool(BaseTool):
             if file_pattern:
                 filters["file_pattern"] = file_pattern
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
                 response = await client.post(
                     f"{self.engine_url}/api/v1/search",
                     json={

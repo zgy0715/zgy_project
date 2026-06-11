@@ -12,7 +12,9 @@ from app.memory.base import BaseMemory
 from app.memory.short_term import ShortTermMemory
 from app.models.enums import AgentType, MessageRole, TaskStatus
 from app.models.schemas import Message
+from app.services.llm_service import LLMService
 from app.tools.base import BaseTool
+from app.utils.prompt_templates import PromptTemplates
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,7 @@ class BaseAgent(ABC):
         description: Description of the agent's capabilities.
         tools: List of tools available to this agent.
         memory: Memory instance for conversation history.
+        llm: LLM service for generating responses.
         status: Current task status of the agent.
     """
 
@@ -42,6 +45,7 @@ class BaseAgent(ABC):
         description: str = "",
         tools: list[BaseTool] | None = None,
         memory: BaseMemory | None = None,
+        llm_service: LLMService | None = None,
         config: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the agent.
@@ -51,12 +55,14 @@ class BaseAgent(ABC):
             description: Description of the agent's capabilities.
             tools: List of tools available to this agent.
             memory: Memory backend; defaults to ShortTermMemory.
+            llm_service: LLM service for generation; created lazily if omitted.
             config: Additional configuration parameters.
         """
         self.name = name
         self.description = description
         self.tools: list[BaseTool] = tools or []
         self.memory: BaseMemory = memory or ShortTermMemory()
+        self._llm_service: LLMService | None = llm_service
         self.config: dict[str, Any] = config or {}
         self.status: TaskStatus = TaskStatus.PENDING
         self.messages: list[Message] = []
@@ -66,6 +72,18 @@ class BaseAgent(ABC):
         self.updated_at: datetime = datetime.utcnow()
 
         logger.info("Initialized agent %s of type %s", name, self.agent_type)
+
+    @property
+    def llm(self) -> LLMService:
+        """Lazy-initialized LLM service."""
+        if self._llm_service is None:
+            self._llm_service = LLMService()
+        return self._llm_service
+
+    @property
+    def prompt_templates(self) -> type[PromptTemplates]:
+        """Accessor for prompt templates."""
+        return PromptTemplates
 
     @property
     @abstractmethod

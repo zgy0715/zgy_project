@@ -4,7 +4,8 @@ import logging
 from typing import Any
 
 from app.agents.base import BaseAgent
-from app.models.enums import AgentType
+from app.models.enums import AgentType, MessageRole
+from app.models.schemas import Message
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class CoderAgent(BaseAgent):
         return AgentType.CODER
 
     async def plan(self, task: str, context: dict[str, Any]) -> str:
-        """Create a code generation plan.
+        """Create a code generation plan using the LLM.
 
         Analyzes the task to determine what code needs to be written,
         which files to modify, and what patterns to follow.
@@ -56,20 +57,30 @@ class CoderAgent(BaseAgent):
         """
         logger.info("CoderAgent '%s' planning task: %s", self.name, task)
 
-        # TODO: Integrate with LLM service for plan generation
-        plan = (
-            f"Code generation plan for: {task}\n"
-            f"1. Analyze requirements and existing codebase context\n"
-            f"2. Identify files to create or modify\n"
-            f"3. Design the implementation approach\n"
-            f"4. Generate code following project conventions\n"
-            f"5. Add type hints and docstrings"
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=CODER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Analyze the following task and create a detailed code generation plan.\n\n"
+                f"Task: {task}\n"
+                f"Context: {context}\n\n"
+                f"Output a structured plan covering:\n"
+                f"1. Requirements analysis\n"
+                f"2. Files to create/modify\n"
+                f"3. Implementation approach\n"
+                f"4. Key design decisions"
+            )),
+        ]
+
+        plan = await self.llm.complete(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2048,
         )
 
         return plan
 
     async def execute(self, plan: str, context: dict[str, Any]) -> str:
-        """Execute the code generation plan.
+        """Execute the code generation plan using the LLM and tools.
 
         Uses available tools (file_ops, terminal) to implement
         the code changes described in the plan.
@@ -83,22 +94,49 @@ class CoderAgent(BaseAgent):
         """
         logger.info("CoderAgent '%s' executing plan", self.name)
 
-        # TODO: Integrate with LLM service and tools for actual code generation
-        execution_result = (
-            f"Executed code generation plan:\n{plan}\n\n"
-            f"Generated code artifacts (placeholder)."
+        # Gather existing code context from tools if available
+        existing_code = ""
+        if "file_read" in self.tool_map and "target_file" in context:
+            result = await self.use_tool("file_read", path=context["target_file"])
+            if result.success:
+                existing_code = result.output
+
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=CODER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Generate production-ready code based on the following plan.\n\n"
+                f"Plan: {plan}\n"
+                f"Context: {context}\n"
+                f"{'Existing code to modify:\n' + existing_code if existing_code else ''}\n\n"
+                f"Output the complete code with:\n"
+                f"- Full implementation (not placeholders)\n"
+                f"- Type hints and docstrings\n"
+                f"- Proper error handling\n"
+                f"- Follow project conventions"
+            )),
+        ]
+
+        code = await self.llm.complete(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=8192,
         )
+
+        # Write generated code to file if target path is specified
+        if "file_write" in self.tool_map and "output_file" in context:
+            await self.use_tool("file_write", path=context["output_file"], content=code)
 
         self.artifacts.append({
             "type": "code_generation",
             "plan": plan,
             "status": "completed",
+            "output_length": len(code),
         })
 
-        return execution_result
+        return code
 
     async def reflect(self, execution_result: str) -> str:
-        """Review generated code for quality and correctness.
+        """Review generated code for quality and correctness using the LLM.
 
         Checks the generated code against best practices, project
         conventions, and the original task requirements.
@@ -111,10 +149,25 @@ class CoderAgent(BaseAgent):
         """
         logger.info("CoderAgent '%s' reflecting on results", self.name)
 
-        # TODO: Integrate with LLM service for code review reflection
-        reflection = (
-            f"Code generation review:\n{execution_result}\n\n"
-            f"Quality check completed (placeholder)."
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=CODER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Review the following generated code for quality and correctness.\n\n"
+                f"Generated code:\n{execution_result}\n\n"
+                f"Check for:\n"
+                f"1. Correctness — any bugs or logic errors?\n"
+                f"2. Completeness — does it fully implement the requirements?\n"
+                f"3. Quality — proper error handling, type hints, docstrings?\n"
+                f"4. Edge cases — are unusual inputs handled?\n\n"
+                f"If issues are found, output the corrected code. "
+                f"Otherwise, confirm the code is ready."
+            )),
+        ]
+
+        reflection = await self.llm.complete(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=4096,
         )
 
         return reflection

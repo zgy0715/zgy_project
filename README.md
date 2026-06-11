@@ -438,8 +438,8 @@ frontend/
 
 - [x] 项目架构设计
 - [x] 项目骨架搭建 (200+ 文件)
-- [ ] 向量引擎核心 (C++ HNSW + pybind11)
-- [ ] Agent 运行时 (LangGraph + FastAPI)
+- [x] 向量引擎核心 (C++ HNSW + pybind11)
+- [x] Agent 运行时 (LangGraph + FastAPI)
 - [ ] Coder & Reviewer Agent
 - [ ] API 网关 (Spring Boot)
 - [ ] 前端界面 (Next.js)

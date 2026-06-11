@@ -40,9 +40,13 @@ def sample_messages() -> list[Message]:
 
 
 @pytest.fixture
-def coder_agent() -> CoderAgent:
-    """Provide a CoderAgent instance for testing."""
-    return CoderAgent(name="test-coder", description="Test coder agent")
+def coder_agent(mock_llm_service: AsyncMock) -> CoderAgent:
+    """Provide a CoderAgent instance with mocked LLM for testing."""
+    return CoderAgent(
+        name="test-coder",
+        description="Test coder agent",
+        llm_service=mock_llm_service,
+    )
 
 
 @pytest.fixture

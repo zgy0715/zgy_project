@@ -66,26 +66,44 @@ class GitTool(BaseTool):
             logger.error("Git operation '%s' failed: %s", operation, str(e))
             return ToolResult(success=False, error=str(e))
 
+    def _get_repo(self) -> Any:
+        """Get a GitPython Repo instance for the configured path."""
+        import git
+        return git.Repo(self.repo_path or ".")
+
     async def _status(self) -> ToolResult:
-        """Get the repository status.
+        """Get the repository status using GitPython.
 
         Returns:
             ToolResult with the status output.
         """
-        # TODO: Integrate with GitPython for actual implementation
         try:
-            import git
+            repo = self._get_repo()
+            status_output: list[str] = []
 
-            repo = git.Repo(self.repo_path or ".")
-            status_output = []
             if repo.is_dirty():
                 status_output.append("Modified files:")
                 for item in repo.index.diff(None):
                     status_output.append(f"  M {item.a_path}")
                 for item in repo.index.diff("HEAD"):
-                    status_output.append(f"  S {item.a_path}")
+                    change = "A" if item.new_file else "M"
+                    status_output.append(f"  {change} {item.a_path}")
+
+                # Untracked files
+                untracked = repo.untracked_files
+                if untracked:
+                    status_output.append("Untracked files:")
+                    for f in untracked:
+                        status_output.append(f"  ? {f}")
             else:
                 status_output.append("Working tree clean")
+
+            # Current branch info
+            try:
+                branch = repo.active_branch.name
+                status_output.insert(0, f"On branch: {branch}")
+            except Exception:
+                status_output.insert(0, "HEAD detached")
 
             return ToolResult(
                 success=True,
@@ -95,7 +113,7 @@ class GitTool(BaseTool):
             return ToolResult(success=False, error=str(e))
 
     async def _diff(self, target: str = "") -> ToolResult:
-        """Get the diff of changes.
+        """Get the diff of changes using GitPython.
 
         Args:
             target: Optional target (commit, branch, file) to diff against.
@@ -103,14 +121,23 @@ class GitTool(BaseTool):
         Returns:
             ToolResult with the diff output.
         """
-        # TODO: Integrate with GitPython for actual implementation
-        return ToolResult(
-            success=True,
-            output=f"Git diff output (placeholder, target={target})",
-        )
+        try:
+            repo = self._get_repo()
+            if target:
+                diff = repo.index.diff(target)
+            else:
+                diff = repo.index.diff(None)
+
+            diff_output = [str(d).strip() for d in diff if d.a_blob and d.b_blob]
+            return ToolResult(
+                success=True,
+                output="\n".join(diff_output) if diff_output else "No changes",
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
 
     async def _log(self, count: int = 10) -> ToolResult:
-        """Get the commit log.
+        """Get the commit log using GitPython.
 
         Args:
             count: Number of commits to return.
@@ -118,14 +145,23 @@ class GitTool(BaseTool):
         Returns:
             ToolResult with the log output.
         """
-        # TODO: Integrate with GitPython for actual implementation
-        return ToolResult(
-            success=True,
-            output=f"Git log (last {count} commits, placeholder)",
-        )
+        try:
+            repo = self._get_repo()
+            log_lines: list[str] = []
+            for commit in repo.iter_commits(max_count=count):
+                log_lines.append(
+                    f"{commit.hexsha[:8]} {commit.author.name} "
+                    f"{commit.message.split(chr(10))[0]}"
+                )
+            return ToolResult(
+                success=True,
+                output="\n".join(log_lines) if log_lines else "No commits found",
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
 
     async def _add(self, files: list[str]) -> ToolResult:
-        """Stage files for commit.
+        """Stage files for commit using GitPython.
 
         Args:
             files: List of file paths to stage.
@@ -133,14 +169,25 @@ class GitTool(BaseTool):
         Returns:
             ToolResult indicating success.
         """
-        # TODO: Integrate with GitPython for actual implementation
-        return ToolResult(
-            success=True,
-            output=f"Staged {len(files)} files (placeholder)",
-        )
+        try:
+            repo = self._get_repo()
+            if files:
+                repo.index.add(files)
+                return ToolResult(
+                    success=True,
+                    output=f"Staged {len(files)} file(s): {', '.join(files)}",
+                )
+            else:
+                repo.index.add("*")
+                return ToolResult(
+                    success=True,
+                    output="All changes staged",
+                )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
 
     async def _commit(self, message: str) -> ToolResult:
-        """Create a commit with the staged changes.
+        """Create a commit with the staged changes using GitPython.
 
         Args:
             message: Commit message.
@@ -151,14 +198,19 @@ class GitTool(BaseTool):
         if not message:
             return ToolResult(success=False, error="Commit message is required")
 
-        # TODO: Integrate with GitPython for actual implementation
-        return ToolResult(
-            success=True,
-            output=f"Committed with message: {message} (placeholder)",
-        )
+        try:
+            repo = self._get_repo()
+            commit = repo.index.commit(message)
+            return ToolResult(
+                success=True,
+                output=f"Committed: {commit.hexsha[:8]} - {message}",
+                metadata={"hash": commit.hexsha},
+            )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
 
     async def _branch(self, action: str = "list") -> ToolResult:
-        """Manage branches.
+        """Manage branches using GitPython.
 
         Args:
             action: Branch action (list, create, delete, checkout).
@@ -166,11 +218,29 @@ class GitTool(BaseTool):
         Returns:
             ToolResult with the branch operation result.
         """
-        # TODO: Integrate with GitPython for actual implementation
-        return ToolResult(
-            success=True,
-            output=f"Git branch {action} (placeholder)",
-        )
+        try:
+            repo = self._get_repo()
+            if action == "list":
+                branches = [b.name for b in repo.branches]
+                return ToolResult(
+                    success=True,
+                    output="Branches:\n" + "\n".join(f"  {b}" for b in branches),
+                )
+            elif action == "current":
+                try:
+                    return ToolResult(
+                        success=True,
+                        output=f"Current branch: {repo.active_branch.name}",
+                    )
+                except Exception:
+                    return ToolResult(success=True, output="HEAD detached")
+            else:
+                return ToolResult(
+                    success=False,
+                    error=f"Branch action '{action}' requires a branch name argument",
+                )
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
 
     def get_schema(self) -> dict[str, Any]:
         """Return the tool's parameter schema."""

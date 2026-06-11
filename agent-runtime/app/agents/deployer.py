@@ -4,7 +4,8 @@ import logging
 from typing import Any
 
 from app.agents.base import BaseAgent
-from app.models.enums import AgentType
+from app.models.enums import AgentType, MessageRole
+from app.models.schemas import Message
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class DeployerAgent(BaseAgent):
         return AgentType.DEPLOYER
 
     async def plan(self, task: str, context: dict[str, Any]) -> str:
-        """Create a deployment configuration plan.
+        """Create a deployment configuration plan using the LLM.
 
         Analyzes the project to determine deployment requirements,
         target environments, and necessary infrastructure.
@@ -57,20 +58,31 @@ class DeployerAgent(BaseAgent):
         """
         logger.info("DeployerAgent '%s' planning deployment: %s", self.name, task)
 
-        # TODO: Integrate with LLM service for plan generation
-        plan = (
-            f"Deployment plan for: {task}\n"
-            f"1. Analyze project structure and dependencies\n"
-            f"2. Determine target deployment environment\n"
-            f"3. Design containerization strategy\n"
-            f"4. Create CI/CD pipeline configuration\n"
-            f"5. Configure monitoring and health checks"
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=DEPLOYER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Create a deployment configuration plan for the following task.\n\n"
+                f"Task: {task}\n"
+                f"Context: {context}\n\n"
+                f"Outline:\n"
+                f"1. Project structure and dependency analysis\n"
+                f"2. Target deployment environment\n"
+                f"3. Containerization strategy\n"
+                f"4. CI/CD pipeline design\n"
+                f"5. Monitoring and health check configuration"
+            )),
+        ]
+
+        plan = await self.llm.complete(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=2048,
         )
 
         return plan
 
     async def execute(self, plan: str, context: dict[str, Any]) -> str:
-        """Execute the deployment configuration plan.
+        """Execute the deployment configuration plan using the LLM.
 
         Generates deployment artifacts using available tools and the LLM.
 
@@ -79,29 +91,51 @@ class DeployerAgent(BaseAgent):
             context: Additional context for deployment configuration.
 
         Returns:
-            A description of the generated deployment configurations.
+            The generated deployment configuration(s).
         """
         logger.info("DeployerAgent '%s' executing deployment plan", self.name)
 
-        # TODO: Integrate with LLM service and tools for actual deployment config
-        execution_result = (
-            f"Executed deployment plan:\n{plan}\n\n"
-            f"Generated deployment artifacts (placeholder):\n"
-            f"- Dockerfile\n"
-            f"- docker-compose.yml\n"
-            f"- CI/CD pipeline configuration"
+        tech_stack = context.get("tech_stack", [])
+        project_name = context.get("project_name", "project")
+
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=DEPLOYER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Generate deployment configurations based on the following plan.\n\n"
+                f"Plan: {plan}\n"
+                f"Project: {project_name}\n"
+                f"Tech stack: {', '.join(tech_stack) if tech_stack else 'unknown'}\n"
+                f"Context: {context}\n\n"
+                f"Generate:\n"
+                f"1. Dockerfile with multi-stage build\n"
+                f"2. docker-compose.yml for local development\n"
+                f"3. CI/CD pipeline configuration (GitHub Actions)\n"
+                f"4. Health check configuration\n\n"
+                f"Follow best practices:\n"
+                f"- Use specific base image versions\n"
+                f"- Implement proper layer caching\n"
+                f"- Include health checks and readiness probes\n"
+                f"- Configure resource limits"
+            )),
+        ]
+
+        deployment_config = await self.llm.complete(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=8192,
         )
 
         self.artifacts.append({
             "type": "deployment_config",
             "plan": plan,
             "status": "completed",
+            "output_length": len(deployment_config),
         })
 
-        return execution_result
+        return deployment_config
 
     async def reflect(self, execution_result: str) -> str:
-        """Reflect on deployment configurations for best practices.
+        """Reflect on deployment configurations for best practices using the LLM.
 
         Ensures the generated configurations follow security best
         practices, are optimized, and are production-ready.
@@ -114,10 +148,24 @@ class DeployerAgent(BaseAgent):
         """
         logger.info("DeployerAgent '%s' reflecting on deployment config", self.name)
 
-        # TODO: Integrate with LLM service for deployment config review
-        reflection = (
-            f"Deployment config review:\n{execution_result}\n\n"
-            f"Security and best practices verified (placeholder)."
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=DEPLOYER_SYSTEM_PROMPT),
+            Message(role=MessageRole.USER, content=(
+                f"Review the following deployment configurations for best practices.\n\n"
+                f"Deployment config:\n{execution_result}\n\n"
+                f"Check:\n"
+                f"1. Security — are secrets handled properly?\n"
+                f"2. Performance — is the build optimized?\n"
+                f"3. Reliability — are health checks configured?\n"
+                f"4. Reproducibility — are versions pinned?\n\n"
+                f"Output improved configurations if issues are found."
+            )),
+        ]
+
+        reflection = await self.llm.complete(
+            messages=messages,
+            temperature=0.3,
+            max_tokens=4096,
         )
 
         return reflection

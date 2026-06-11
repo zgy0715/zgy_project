@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.graph.workflow import WorkflowEngine
 from app.models.enums import WorkflowStatus
 from app.models.schemas import (
     WorkflowCreateRequest,
@@ -18,6 +19,17 @@ router = APIRouter()
 
 # In-memory workflow store (replace with database in production)
 _workflows: dict[str, dict[str, Any]] = {}
+
+# Global workflow engine instance
+_engine: WorkflowEngine | None = None
+
+
+def _get_engine() -> WorkflowEngine:
+    """Get or create the global workflow engine instance."""
+    global _engine
+    if _engine is None:
+        _engine = WorkflowEngine()
+    return _engine
 
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
@@ -103,6 +115,9 @@ async def execute_workflow(
 ) -> WorkflowExecutionResponse:
     """Execute a workflow with the given input task.
 
+    Uses the LangGraph WorkflowEngine to orchestrate agents through
+    the DAG defined by the workflow.
+
     Args:
         workflow_id: Unique identifier of the workflow.
         request: Workflow execution parameters.
@@ -128,16 +143,31 @@ async def execute_workflow(
         request.input_task,
     )
 
-    # TODO: Integrate with LangGraph workflow engine
-    # For now, return a placeholder response
-    workflow_data["status"] = WorkflowStatus.COMPLETED
+    try:
+        engine = _get_engine()
+        result = await engine.run(
+            task=request.input_task,
+            context=request.context,
+        )
 
-    return WorkflowExecutionResponse(
-        workflow_id=workflow_id,
-        status=WorkflowStatus.COMPLETED,
-        results={"task": request.input_task, "output": "Workflow executed (placeholder)"},
-        error=None,
-    )
+        workflow_data["status"] = WorkflowStatus.COMPLETED
+
+        return WorkflowExecutionResponse(
+            workflow_id=workflow_id,
+            status=WorkflowStatus.COMPLETED,
+            results=result,
+            error=None,
+        )
+
+    except Exception as e:
+        workflow_data["status"] = WorkflowStatus.FAILED
+        logger.error("Workflow %s execution failed: %s", workflow_id, str(e))
+        return WorkflowExecutionResponse(
+            workflow_id=workflow_id,
+            status=WorkflowStatus.FAILED,
+            results={},
+            error=str(e),
+        )
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
