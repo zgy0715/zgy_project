@@ -8,6 +8,7 @@ import {
 } from 'reactflow';
 
 // Custom edge component for workflow connections
+// Supports default (solid) and conditional (dashed) edge styles
 export function CustomEdge({
   id,
   sourceX,
@@ -19,6 +20,7 @@ export function CustomEdge({
   data,
   selected,
   animated,
+  label,
 }: EdgeProps) {
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -29,25 +31,22 @@ export function CustomEdge({
     targetPosition,
   });
 
-  const edgeClassName = [
-    'stroke-surface-4',
-    selected ? 'stroke-brand-500' : '',
-    animated ? 'animated' : '',
-  ].filter(Boolean).join(' ');
+  // Determine if this is a conditional edge
+  const isConditional = data?.edgeType === 'conditional';
 
   return (
     <>
       <BaseEdge
         id={id}
         path={edgePath}
-        className={edgeClassName}
         style={{
-          strokeWidth: selected ? 2 : 1.5,
-          stroke: selected ? '#6366f1' : '#3f3f46',
+          strokeWidth: selected ? 2.5 : 1.5,
+          stroke: selected ? '#6366f1' : '#52525b',
+          strokeDasharray: isConditional ? '6 3' : undefined,
         }}
       />
       {/* Edge label for conditional branches */}
-      {data?.label && (
+      {(label || data?.label) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -55,9 +54,15 @@ export function CustomEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: 'all',
             }}
-            className="bg-surface-2 border border-surface-3 rounded-md px-2 py-0.5 text-xs text-zinc-400"
+            className={`
+              rounded-md px-2 py-0.5 text-xs
+              ${isConditional
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                : 'bg-surface-2 border border-surface-3 text-zinc-400'
+              }
+            `}
           >
-            {data.label as string}
+            {(label ?? data?.label) as string}
           </div>
         </EdgeLabelRenderer>
       )}

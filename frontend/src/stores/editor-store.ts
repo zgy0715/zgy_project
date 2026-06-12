@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import type { ProjectFile } from '@/types';
+import { mockFileTree, mockFileContents } from '@/lib/mock-data';
 
 interface EditorTab {
   id: string;
@@ -18,6 +19,7 @@ interface EditorState {
   activeTabId: string | null;
   fileContent: Record<string, string>;
   expandedDirs: Set<string>;
+  isDiffMode: boolean;
   isLoading: boolean;
   error: string | null;
 
@@ -28,17 +30,35 @@ interface EditorState {
   setActiveTab: (tabId: string) => void;
   updateFileContent: (fileId: string, content: string) => void;
   toggleDir: (path: string) => void;
+  selectFile: (path: string) => void;
+  toggleDiffMode: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
 }
 
+// Helper: find a file by path in the nested tree
+function findFileByPath(
+  files: ProjectFile[],
+  path: string
+): ProjectFile | null {
+  for (const file of files) {
+    if (file.path === path) return file;
+    if (file.children) {
+      const found = findFileByPath(file.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export const useEditorStore = create<EditorState>()((set, get) => ({
-  files: [],
+  files: mockFileTree,
   openTabs: [],
   activeTabId: null,
-  fileContent: {},
-  expandedDirs: new Set<string>(),
+  fileContent: { ...mockFileContents },
+  expandedDirs: new Set<string>(['src', 'src/main', 'src/main/java', 'src/main/java/com', 'src/main/java/com/example', 'src/main/java/com/example/ecommerce', 'src/main/resources']),
+  isDiffMode: false,
   isLoading: false,
   error: null,
 
@@ -102,6 +122,17 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
       }
       return { expandedDirs: newExpanded };
     }),
+
+  selectFile: (path) => {
+    const { files } = get();
+    const file = findFileByPath(files, path);
+    if (file && file.type === 'file') {
+      get().openFile(file);
+    }
+  },
+
+  toggleDiffMode: () =>
+    set((state) => ({ isDiffMode: !state.isDiffMode })),
 
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error, isLoading: false }),

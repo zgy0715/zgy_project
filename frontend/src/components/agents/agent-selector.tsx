@@ -1,47 +1,78 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { AGENT_TYPE_META } from '@/lib/constants';
-import { AgentStatusIndicator } from './agent-status';
+import { AgentStatusDot } from './agent-status';
 import type { Agent } from '@/types';
+
+// Agent type emoji map
+const agentEmojiMap: Record<string, string> = {
+  coder: '🧑‍💻',
+  reviewer: '🔍',
+  tester: '🧪',
+  deployer: '🚀',
+  planner: '📋',
+  custom: '⚙️',
+};
 
 interface AgentSelectorProps {
   agents: Agent[];
-  currentAgent: Agent | null;
-  onSelect: (agent: Agent) => void;
+  selectedAgentId: string | null; // null means "all agents"
+  onSelectAgent: (agentId: string | null) => void;
 }
 
-export function AgentSelector({ agents, currentAgent, onSelect }: AgentSelectorProps) {
+export function AgentSelector({
+  agents,
+  selectedAgentId,
+  onSelectAgent,
+}: AgentSelectorProps) {
   return (
-    <div className="space-y-1">
-      <label className="text-xs text-zinc-500 font-medium">Select Agent</label>
-      <div className="flex flex-wrap gap-2">
+    <div className="flex flex-col h-full">
+      {/* Agent list */}
+      <div className="flex-1 overflow-y-auto py-2 scrollbar-thin">
         {agents.map((agent) => {
-          const meta = AGENT_TYPE_META[agent.type];
-          const isSelected = currentAgent?.id === agent.id;
+          const isSelected = selectedAgentId === agent.id;
+          const emoji = agentEmojiMap[agent.type] ?? '🤖';
 
           return (
             <button
               key={agent.id}
-              onClick={() => onSelect(agent)}
+              onClick={() => onSelectAgent(agent.id)}
               className={cn(
-                'flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors border',
+                'flex items-center gap-3 w-full px-3 py-2.5 text-left transition-colors',
                 isSelected
-                  ? 'bg-brand-600/20 border-brand-500/50 text-brand-400'
-                  : 'bg-surface-2 border-surface-3 text-zinc-400 hover:text-white hover:border-surface-4'
+                  ? 'bg-brand-600/15 text-white'
+                  : 'text-zinc-400 hover:bg-surface-2 hover:text-white'
               )}
             >
-              <div
-                className="w-6 h-6 rounded flex items-center justify-center text-xs font-medium"
-                style={{ backgroundColor: meta.color + '20', color: meta.color }}
-              >
-                {meta.label.charAt(0)}
-              </div>
-              <span>{agent.name}</span>
-              <AgentStatusIndicator status={agent.status} size="sm" showLabel={false} />
+              {/* Emoji icon */}
+              <span className="text-base flex-shrink-0">{emoji}</span>
+
+              {/* Agent name */}
+              <span className="text-sm font-medium flex-1 truncate">
+                {agent.name}
+              </span>
+
+              {/* Status dot */}
+              <AgentStatusDot status={agent.status} size="sm" />
             </button>
           );
         })}
+      </div>
+
+      {/* "All agents" button */}
+      <div className="border-t border-surface-3 p-2">
+        <button
+          onClick={() => onSelectAgent(null)}
+          className={cn(
+            'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-left transition-colors',
+            selectedAgentId === null
+              ? 'bg-brand-600/15 text-white'
+              : 'text-zinc-400 hover:bg-surface-2 hover:text-white'
+          )}
+        >
+          <span className="text-base flex-shrink-0">👥</span>
+          <span className="text-sm font-medium">全部 Agent</span>
+        </button>
       </div>
     </div>
   );

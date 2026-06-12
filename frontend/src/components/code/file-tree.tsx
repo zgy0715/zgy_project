@@ -1,18 +1,20 @@
 'use client';
 
+import { useState } from 'react';
+import { FileCode, FileText, Folder, FolderOpen, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useEditorStore } from '@/stores/editor-store';
 import type { ProjectFile } from '@/types';
 
 interface FileTreeProps {
   files: ProjectFile[];
-  onFileSelect: (file: ProjectFile) => void;
+  onFileSelect: (path: string) => void;
   activeFilePath?: string;
 }
 
 export function FileTree({ files, onFileSelect, activeFilePath }: FileTreeProps) {
   return (
-    <div className="py-2 text-sm">
+    <div className="py-1 text-sm">
       {files.map((file) => (
         <FileTreeNode
           key={file.id}
@@ -29,62 +31,61 @@ export function FileTree({ files, onFileSelect, activeFilePath }: FileTreeProps)
 interface FileTreeNodeProps {
   file: ProjectFile;
   depth: number;
-  onFileSelect: (file: ProjectFile) => void;
+  onFileSelect: (path: string) => void;
   activeFilePath?: string;
 }
 
 function FileTreeNode({ file, depth, onFileSelect, activeFilePath }: FileTreeNodeProps) {
+  const [localExpanded, setLocalExpanded] = useState(false);
   const expandedDirs = useEditorStore((s) => s.expandedDirs);
   const toggleDir = useEditorStore((s) => s.toggleDir);
-  const isExpanded = expandedDirs.has(file.path);
+
+  // Sync with store expanded dirs, fallback to local state
+  const isExpanded = expandedDirs.has(file.path) || localExpanded;
   const isDirectory = file.type === 'directory';
   const isActive = file.path === activeFilePath;
 
   const handleClick = () => {
     if (isDirectory) {
       toggleDir(file.path);
+      setLocalExpanded((prev) => !prev);
     } else {
-      onFileSelect(file);
+      onFileSelect(file.path);
     }
   };
+
+  // Pick icon based on file type
+  const FileIcon = isDirectory
+    ? isExpanded
+      ? FolderOpen
+      : Folder
+    : getFileIconComponent(file.name);
 
   return (
     <div>
       <button
         onClick={handleClick}
         className={cn(
-          'w-full flex items-center gap-1.5 px-2 py-1 hover:bg-surface-2 transition-colors text-left',
+          'w-full flex items-center gap-1.5 py-1 pr-2 hover:bg-surface-2 transition-colors text-left',
           isActive && 'bg-brand-600/20 text-brand-400',
           !isActive && 'text-zinc-400'
         )}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
-        {/* Expand/collapse arrow for directories */}
+        {/* Expand/collapse arrow */}
         {isDirectory ? (
-          <svg
+          <ChevronRight
             className={cn(
-              'w-4 h-4 flex-shrink-0 transition-transform',
+              'w-3.5 h-3.5 flex-shrink-0 transition-transform',
               isExpanded && 'rotate-90'
             )}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M9 5l7 7-7 7"
-            />
-          </svg>
+          />
         ) : (
-          <span className="w-4 flex-shrink-0" />
+          <span className="w-3.5 flex-shrink-0" />
         )}
 
         {/* File/directory icon */}
-        <span className="flex-shrink-0 text-xs">
-          {isDirectory ? (isExpanded ? '📂' : '📁') : getFileIcon(file.name)}
-        </span>
+        <FileIcon className="w-4 h-4 flex-shrink-0" />
 
         {/* Name */}
         <span className="truncate">{file.name}</span>
@@ -108,29 +109,19 @@ function FileTreeNode({ file, depth, onFileSelect, activeFilePath }: FileTreeNod
   );
 }
 
-// Map file extensions to emoji icons
-function getFileIcon(name: string): string {
+// Map file name/extension to lucide-react icon component
+function getFileIconComponent(name: string) {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  const iconMap: Record<string, string> = {
-    ts: '🟦',
-    tsx: '🟦',
-    js: '🟨',
-    jsx: '🟨',
-    py: '🐍',
-    rs: '🦀',
-    go: '🔵',
-    java: '☕',
-    json: '📋',
-    yaml: '📋',
-    yml: '📋',
-    md: '📝',
-    css: '🎨',
-    scss: '🎨',
-    html: '🌐',
-    sql: '🗃️',
-    sh: '⚙️',
-    gitignore: '🙈',
-    env: '🔒',
-  };
-  return iconMap[ext] ?? '📄';
+  const codeExtensions = new Set([
+    'java', 'py', 'ts', 'tsx', 'js', 'jsx', 'rs', 'go', 'rb', 'php',
+    'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala', 'sh', 'bash',
+  ]);
+  const textExtensions = new Set([
+    'yml', 'yaml', 'xml', 'json', 'md', 'txt', 'env', 'toml', 'ini', 'cfg',
+  ]);
+
+  if (name === 'Dockerfile') return FileCode;
+  if (codeExtensions.has(ext)) return FileCode;
+  if (textExtensions.has(ext)) return FileText;
+  return FileText;
 }

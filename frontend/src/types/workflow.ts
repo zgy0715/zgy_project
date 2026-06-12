@@ -19,7 +19,7 @@ export interface WorkflowNodeData {
   agentType?: string;
   config?: Record<string, unknown>;
   description?: string;
-  status?: 'idle' | 'running' | 'success' | 'error';
+  status?: 'idle' | 'thinking' | 'running' | 'success' | 'error';
 }
 
 export interface WorkflowEdge {

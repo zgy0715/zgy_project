@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@/types';
 import { STORAGE_KEYS } from '@/lib/constants';
+import { mockUser } from '@/lib/mock-data';
 
 interface AuthState {
   user: User | null;
@@ -25,9 +26,10 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      user: null,
-      token: null,
-      isAuthenticated: false,
+      // Default to logged-in state with mock user
+      user: mockUser,
+      token: 'mock-jwt-token-demo',
+      isAuthenticated: true,
       isLoading: false,
       error: null,
 

@@ -1,30 +1,50 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
-import { useEditorStore } from '@/stores/editor-store';
+import { Spinner } from '@/components/ui/spinner';
 
 interface CodeEditorProps {
-  fileId: string;
+  value: string;
   language: string;
-  initialValue?: string;
   readOnly?: boolean;
 }
 
+// Map file extension to Monaco language identifier
+function getMonacoLanguage(language: string): string {
+  const map: Record<string, string> = {
+    java: 'java',
+    python: 'python',
+    typescript: 'typescript',
+    tsx: 'typescript',
+    javascript: 'javascript',
+    jsx: 'javascript',
+    yaml: 'yaml',
+    xml: 'xml',
+    json: 'json',
+    markdown: 'markdown',
+    dockerfile: 'dockerfile',
+    sql: 'sql',
+    css: 'css',
+    html: 'html',
+    shell: 'shell',
+    plaintext: 'plaintext',
+  };
+  return map[language] ?? 'plaintext';
+}
+
 export function CodeEditor({
-  fileId,
+  value,
   language,
-  initialValue = '',
-  readOnly = false,
+  readOnly = true,
 }: CodeEditorProps) {
-  const updateFileContent = useEditorStore((s) => s.updateFileContent);
+  const monacoLanguage = useMemo(() => getMonacoLanguage(language), [language]);
 
   const handleEditorMount: OnMount = useCallback(
     (editor) => {
-      // Configure editor settings
       editor.updateOptions({
         fontSize: 14,
-        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
         fontLigatures: true,
         minimap: { enabled: true },
         scrollBeyondLastLine: false,
@@ -33,32 +53,24 @@ export function CodeEditor({
         renderLineHighlight: 'all',
         bracketPairColorization: { enabled: true },
         readOnly,
+        wordWrap: 'on',
+        automaticLayout: true,
       });
     },
     [readOnly]
-  );
-
-  const handleChange = useCallback(
-    (value: string | undefined) => {
-      if (value !== undefined) {
-        updateFileContent(fileId, value);
-      }
-    },
-    [fileId, updateFileContent]
   );
 
   return (
     <div className="h-full w-full">
       <Editor
         height="100%"
-        language={language}
-        value={initialValue}
-        onChange={handleChange}
+        language={monacoLanguage}
+        value={value}
         onMount={handleEditorMount}
         theme="vs-dark"
         loading={
-          <div className="flex items-center justify-center h-full bg-surface-0">
-            <div className="text-sm text-zinc-500">Loading editor...</div>
+          <div className="flex items-center justify-center h-full bg-[#1e1e1e]">
+            <Spinner size="lg" />
           </div>
         }
         options={{

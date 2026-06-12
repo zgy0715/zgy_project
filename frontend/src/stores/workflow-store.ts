@@ -6,7 +6,9 @@ import type {
   WorkflowNode,
   WorkflowEdge,
   WorkflowExecution,
+  WorkflowNodeData,
 } from '@/types';
+import { mockWorkflow } from '@/lib/mock-data';
 
 interface WorkflowState {
   workflows: Workflow[];
@@ -37,18 +39,28 @@ interface WorkflowState {
   // Execution
   setExecution: (execution: WorkflowExecution | null) => void;
   setExecuting: (isExecuting: boolean) => void;
+  runWorkflow: () => void;
+  resetWorkflow: () => void;
 
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
 }
 
-// Re-export for convenience
-type WorkflowNodeData = import('@/types').WorkflowNodeData;
+// Execution order following the DAG: Start → Coder → Reviewer → Condition → Tester → Deployer → End
+const executionOrder = [
+  'node-start',
+  'node-coder',
+  'node-reviewer',
+  'node-condition',
+  'node-tester',
+  'node-deployer',
+  'node-end',
+];
 
-export const useWorkflowStore = create<WorkflowState>()((set) => ({
-  workflows: [],
-  currentWorkflow: null,
+export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
+  workflows: [mockWorkflow],
+  currentWorkflow: mockWorkflow,
   selectedNodeId: null,
   execution: null,
   isExecuting: false,
@@ -144,6 +156,103 @@ export const useWorkflowStore = create<WorkflowState>()((set) => ({
 
   setExecution: (execution) => set({ execution }),
   setExecuting: (isExecuting) => set({ isExecuting }),
+
+  runWorkflow: () => {
+    const { currentWorkflow, isExecuting } = get();
+    if (!currentWorkflow || isExecuting) return;
+
+    // Create execution record
+    const executionId = `exec-${Date.now()}`;
+    const nodeExecutions = executionOrder.map((nodeId) => ({
+      nodeId,
+      status: 'pending' as const,
+    }));
+
+    set({
+      isExecuting: true,
+      execution: {
+        id: executionId,
+        workflowId: currentWorkflow.id,
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        nodeExecutions,
+      },
+      currentWorkflow: {
+        ...currentWorkflow,
+        status: 'running',
+      },
+    });
+
+    // Execute nodes sequentially with 2-second intervals
+    executionOrder.forEach((nodeId, index) => {
+      // Phase 1: Set node to thinking (after delay)
+      setTimeout(() => {
+        get().updateNode(nodeId, { status: 'thinking' });
+        get().setExecution({
+          ...get().execution!,
+          nodeExecutions: get().execution!.nodeExecutions.map((ne) =>
+            ne.nodeId === nodeId ? { ...ne, status: 'running' as const, startedAt: new Date().toISOString() } : ne
+          ),
+        });
+      }, index * 2000);
+
+      // Phase 2: Set node to running
+      setTimeout(() => {
+        get().updateNode(nodeId, { status: 'running' });
+      }, index * 2000 + 600);
+
+      // Phase 3: Set node to success
+      setTimeout(() => {
+        get().updateNode(nodeId, { status: 'success' });
+        get().setExecution({
+          ...get().execution!,
+          nodeExecutions: get().execution!.nodeExecutions.map((ne) =>
+            ne.nodeId === nodeId
+              ? { ...ne, status: 'success' as const, completedAt: new Date().toISOString() }
+              : ne
+          ),
+        });
+
+        // If this is the last node, mark execution as completed
+        if (index === executionOrder.length - 1) {
+          const currentWf = get().currentWorkflow;
+          if (currentWf) {
+            set({
+              isExecuting: false,
+              currentWorkflow: { ...currentWf, status: 'completed' },
+              execution: {
+                ...get().execution!,
+                status: 'completed',
+                completedAt: new Date().toISOString(),
+              },
+            });
+          }
+        }
+      }, index * 2000 + 1500);
+    });
+  },
+
+  resetWorkflow: () => {
+    const { currentWorkflow } = get();
+    if (!currentWorkflow) return;
+
+    // Reset all node statuses to idle
+    const resetNodes = currentWorkflow.nodes.map((n) => ({
+      ...n,
+      data: { ...n.data, status: 'idle' as const },
+    }));
+
+    set({
+      currentWorkflow: {
+        ...currentWorkflow,
+        nodes: resetNodes,
+        status: 'draft',
+      },
+      execution: null,
+      isExecuting: false,
+    });
+  },
+
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error, isLoading: false }),
   clearError: () => set({ error: null }),

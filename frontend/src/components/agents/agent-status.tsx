@@ -1,40 +1,92 @@
+'use client';
+
 import { cn } from '@/lib/utils';
-import { AGENT_STATUS_META } from '@/lib/constants';
 import type { AgentStatus } from '@/types';
 
-interface AgentStatusIndicatorProps {
+interface AgentStatusProps {
   status: AgentStatus;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md';
   showLabel?: boolean;
 }
 
-const sizeMap = {
-  sm: { dot: 'w-2 h-2', text: 'text-xs' },
-  md: { dot: 'w-2.5 h-2.5', text: 'text-sm' },
-  lg: { dot: 'w-3 h-3', text: 'text-base' },
+const statusConfig: Record<
+  AgentStatus,
+  { dot: string; label: string; badge: string }
+> = {
+  idle: {
+    dot: 'bg-slate-400',
+    label: '空闲',
+    badge: 'bg-slate-400/15 text-slate-400',
+  },
+  thinking: {
+    dot: 'bg-amber-500 animate-thinking',
+    label: '思考中',
+    badge: 'bg-amber-500/15 text-amber-400',
+  },
+  running: {
+    dot: 'bg-blue-500',
+    label: '工作中',
+    badge: 'bg-blue-500/15 text-blue-400',
+  },
+  success: {
+    dot: 'bg-green-500',
+    label: '完成',
+    badge: 'bg-green-500/15 text-green-400',
+  },
+  error: {
+    dot: 'bg-red-500',
+    label: '错误',
+    badge: 'bg-red-500/15 text-red-400',
+  },
+  waiting: {
+    dot: 'bg-violet-500',
+    label: '等待中',
+    badge: 'bg-violet-500/15 text-violet-400',
+  },
 };
 
-export function AgentStatusIndicator({
+const dotSizeMap = {
+  sm: 'w-2 h-2',
+  md: 'w-2.5 h-2.5',
+};
+
+// Small dot indicator for agent list
+export function AgentStatusDot({
+  status,
+  size = 'sm',
+}: {
+  status: AgentStatus;
+  size?: 'sm' | 'md';
+}) {
+  const config = statusConfig[status];
+  return (
+    <div
+      className={cn('rounded-full flex-shrink-0', dotSizeMap[size], config.dot)}
+    />
+  );
+}
+
+// Badge component with dot + label
+export function AgentStatusBadge({
   status,
   size = 'md',
   showLabel = true,
-}: AgentStatusIndicatorProps) {
-  const meta = AGENT_STATUS_META[status];
-  const sizes = sizeMap[size];
+}: AgentStatusProps) {
+  const config = statusConfig[status];
+
+  if (!showLabel) {
+    return <AgentStatusDot status={status} size={size} />;
+  }
 
   return (
-    <div className="flex items-center gap-1.5">
-      <div
-        className={cn(
-          'rounded-full',
-          sizes.dot,
-          meta.className,
-          status === 'thinking' && 'animate-thinking'
-        )}
-      />
-      {showLabel && (
-        <span className={cn('text-zinc-400', sizes.text)}>{meta.label}</span>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
+        config.badge
       )}
-    </div>
+    >
+      <span className={cn('rounded-full w-1.5 h-1.5', config.dot)} />
+      {config.label}
+    </span>
   );
 }

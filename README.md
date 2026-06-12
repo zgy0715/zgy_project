@@ -440,11 +440,11 @@ frontend/
 - [x] 项目骨架搭建 (200+ 文件)
 - [x] 向量引擎核心 (C++ HNSW + pybind11)
 - [x] Agent 运行时 (LangGraph + FastAPI)
-- [ ] Coder & Reviewer Agent
-- [ ] API 网关 (Spring Boot)
-- [ ] 前端界面 (Next.js)
-- [ ] 可视化工作流编辑器
-- [ ] Tester & Deployer Agent
+- [x] 前端 Demo (Next.js — 6页面/50+组件/Mock数据)
+- [x] 可视化工作流编辑器 (ReactFlow DAG)
+- [ ] Coder & Reviewer Agent 业务逻辑深化
+- [ ] API 网关 (Spring Boot 业务实现)
+- [ ] 前端 API 对接 & WebSocket 实时通信
 - [ ] 端到端集成联调
 - [ ] 性能优化与基准测试
 - [ ] 演示视频与文档

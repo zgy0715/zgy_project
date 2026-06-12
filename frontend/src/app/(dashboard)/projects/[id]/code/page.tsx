@@ -1,88 +1,58 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { X, GitCompare } from 'lucide-react';
 import { FileTree } from '@/components/code/file-tree';
-import { CodeDiff } from '@/components/code/code-diff';
-import { Terminal } from '@/components/code/terminal';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
-import type { ProjectFile } from '@/types';
+import { useEditorStore } from '@/stores/editor-store';
 
-// Dynamically import Monaco editor to avoid SSR issues
+// Dynamically import Monaco-based components to avoid SSR issues
 const CodeEditor = dynamic(
   () => import('@/components/code/code-editor').then((mod) => mod.CodeEditor),
   {
     ssr: false,
     loading: () => (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex items-center justify-center h-full bg-[#1e1e1e]">
         <Spinner size="lg" />
       </div>
     ),
   }
 );
 
-// Mock file tree
-const mockFiles: ProjectFile[] = [
+const CodeDiff = dynamic(
+  () => import('@/components/code/code-diff').then((mod) => mod.CodeDiff),
   {
-    id: 'f1',
-    projectId: 'proj-1',
-    name: 'src',
-    path: 'src',
-    type: 'directory',
-    lastModified: '',
-    children: [
-      {
-        id: 'f2',
-        projectId: 'proj-1',
-        name: 'index.ts',
-        path: 'src/index.ts',
-        type: 'file',
-        language: 'typescript',
-        lastModified: '',
-      },
-      {
-        id: 'f3',
-        projectId: 'proj-1',
-        name: 'app.ts',
-        path: 'src/app.ts',
-        type: 'file',
-        language: 'typescript',
-        lastModified: '',
-      },
-      {
-        id: 'f4',
-        projectId: 'proj-1',
-        name: 'routes',
-        path: 'src/routes',
-        type: 'directory',
-        lastModified: '',
-        children: [
-          {
-            id: 'f5',
-            projectId: 'proj-1',
-            name: 'auth.ts',
-            path: 'src/routes/auth.ts',
-            type: 'file',
-            language: 'typescript',
-            lastModified: '',
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'f6',
-    projectId: 'proj-1',
-    name: 'package.json',
-    path: 'package.json',
-    type: 'file',
-    language: 'json',
-    lastModified: '',
-  },
-];
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center h-full bg-[#1e1e1e]">
+        <Spinner size="lg" />
+      </div>
+    ),
+  }
+);
 
-type ViewMode = 'editor' | 'diff';
+// Generate simulated original code by removing/modifying a few lines
+function generateOriginalCode(code: string): string {
+  const lines = code.split('\n');
+  // Remove every 5th line and modify every 8th line to simulate changes
+  const result = lines.filter((_, i) => (i + 1) % 5 !== 0).map((line, i) => {
+    if ((i + 1) % 8 === 0 && line.trim().length > 0) {
+      return line.replace(/public/, 'private').replace(/final /, '');
+    }
+    return line;
+  });
+  return result.join('\n');
+}
+
+// Format file size
+function formatFileSize(bytes?: number): string {
+  if (!bytes) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function CodePage({
   params,
@@ -90,115 +60,142 @@ export default function CodePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const [activeFile, setActiveFile] = useState<ProjectFile | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('editor');
 
-  const sampleCode = `import express from 'express';
-import cors from 'cors';
-import { authRouter } from './routes/auth';
+  // Zustand store
+  const files = useEditorStore((s) => s.files);
+  const openTabs = useEditorStore((s) => s.openTabs);
+  const activeTabId = useEditorStore((s) => s.activeTabId);
+  const fileContent = useEditorStore((s) => s.fileContent);
+  const isDiffMode = useEditorStore((s) => s.isDiffMode);
+  const selectFile = useEditorStore((s) => s.selectFile);
+  const closeTab = useEditorStore((s) => s.closeTab);
+  const setActiveTab = useEditorStore((s) => s.setActiveTab);
+  const toggleDiffMode = useEditorStore((s) => s.toggleDiffMode);
 
-const app = express();
+  // Current active tab info
+  const activeTab = openTabs.find((t) => t.id === activeTabId) ?? null;
 
-app.use(cors());
-app.use(express.json());
+  // Current file content from store
+  const currentFileContent = activeTab
+    ? fileContent[activeTab.fileId] ?? ''
+    : '';
 
-app.use('/api/auth', authRouter);
+  // Simulated original code for diff mode
+  const originalCode = useMemo(
+    () => generateOriginalCode(currentFileContent),
+    [currentFileContent]
+  );
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-
-export default app;
-`;
-
-  const oldCode = `import express from 'express';
-import { authRouter } from './routes/auth';
-
-const app = express();
-
-app.use(express.json());
-app.use('/api/auth', authRouter);
-
-export default app;`;
+  // Line count
+  const lineCount = currentFileContent
+    ? currentFileContent.split('\n').length
+    : 0;
 
   return (
-    <div className="space-y-4">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Code</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Browse, edit, and review code generated by agents
-          </p>
+    <div className="flex h-[calc(100vh-80px)]">
+      {/* Left: File tree (260px) */}
+      <div className="w-[260px] flex-shrink-0 bg-surface-1 border-r border-surface-3 flex flex-col">
+        <div className="px-4 py-3 border-b border-surface-3">
+          <h2 className="text-sm font-medium text-white">项目文件</h2>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setViewMode('editor')}
-            className={cn(
-              'px-3 py-1.5 rounded-lg text-sm transition-colors',
-              viewMode === 'editor'
-                ? 'bg-brand-600 text-white'
-                : 'text-zinc-400 hover:text-white hover:bg-surface-2'
-            )}
-          >
-            Editor
-          </button>
-          <button
-            onClick={() => setViewMode('diff')}
-            className={cn(
-              'px-3 py-1.5 rounded-lg text-sm transition-colors',
-              viewMode === 'diff'
-                ? 'bg-brand-600 text-white'
-                : 'text-zinc-400 hover:text-white hover:bg-surface-2'
-            )}
-          >
-            Diff
-          </button>
+        <div className="flex-1 overflow-y-auto scrollbar-thin">
+          <FileTree
+            files={files}
+            onFileSelect={selectFile}
+            activeFilePath={activeTab?.path}
+          />
         </div>
       </div>
 
-      {/* Main content */}
-      <div className="flex gap-4 h-[calc(100vh-240px)]">
-        {/* File tree */}
-        <div className="w-60 flex-shrink-0 bg-surface-1 border border-surface-3 rounded-xl overflow-y-auto scrollbar-thin">
-          <div className="px-4 py-3 border-b border-surface-3">
-            <h2 className="text-sm font-medium text-white">Files</h2>
+      {/* Right: Code area (flex-1) */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top: Tab bar + Diff toggle */}
+        <div className="flex items-center bg-[#1e1e1e] border-b border-surface-3">
+          {/* Tabs */}
+          <div className="flex-1 flex items-center overflow-x-auto scrollbar-none">
+            {openTabs.map((tab) => (
+              <div
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-2 text-sm cursor-pointer border-r border-[#2d2d2d] select-none whitespace-nowrap',
+                  tab.id === activeTabId
+                    ? 'bg-[#1e1e1e] text-white border-t-2 border-t-brand-500'
+                    : 'bg-[#2d2d2d] text-zinc-400 hover:text-zinc-200'
+                )}
+              >
+                <span className="truncate max-w-[120px]">{tab.name}</span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  className="ml-1 p-0.5 rounded hover:bg-surface-2 transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
           </div>
-          <FileTree
-            files={mockFiles}
-            onFileSelect={setActiveFile}
-            activeFilePath={activeFile?.path}
-          />
+
+          {/* Diff mode toggle */}
+          <button
+            onClick={toggleDiffMode}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-l border-[#2d2d2d]',
+              isDiffMode
+                ? 'text-brand-400 bg-brand-600/10'
+                : 'text-zinc-400 hover:text-white'
+            )}
+          >
+            <GitCompare className="w-3.5 h-3.5" />
+            Diff 模式
+          </button>
         </div>
 
-        {/* Editor area */}
-        <div className="flex-1 flex flex-col gap-4">
-          {viewMode === 'editor' ? (
-            <div className="flex-1 bg-surface-1 border border-surface-3 rounded-xl overflow-hidden">
-              {activeFile ? (
-                <CodeEditor
-                  fileId={activeFile.id}
-                  language={activeFile.language ?? 'typescript'}
-                  initialValue={sampleCode}
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
-                  Select a file from the tree to start editing
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex-1 overflow-auto">
+        {/* Code content */}
+        <div className="flex-1 min-h-0">
+          {activeTab ? (
+            isDiffMode ? (
               <CodeDiff
-                oldCode={oldCode}
-                newCode={sampleCode}
-                fileName={activeFile?.name ?? 'app.ts'}
+                original={originalCode}
+                modified={currentFileContent}
+                language={activeTab.language}
               />
+            ) : (
+              <CodeEditor
+                value={currentFileContent}
+                language={activeTab.language}
+                readOnly={true}
+              />
+            )
+          ) : (
+            <div className="flex items-center justify-center h-full bg-[#1e1e1e] text-zinc-500 text-sm">
+              从左侧文件树选择文件以查看代码
             </div>
           )}
+        </div>
 
-          {/* Terminal */}
-          <Terminal projectId={id} className="flex-shrink-0" />
+        {/* Bottom: Status bar */}
+        <div className="flex items-center justify-between px-4 py-1 bg-[#1e1e1e] border-t border-surface-3 text-xs text-zinc-500">
+          <div className="flex items-center gap-4">
+            {activeTab && (
+              <>
+                <span>{activeTab.language}</span>
+                <span>行数: {lineCount}</span>
+              </>
+            )}
+          </div>
+          <div>
+            {activeTab && (
+              <span>大小: {formatFileSize(
+                // Try to compute size from content
+                currentFileContent
+                  ? new Blob([currentFileContent]).size
+                  : undefined
+              )}</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
