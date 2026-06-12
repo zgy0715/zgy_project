@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useMemo } from 'react';
+import { use, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { X, GitCompare } from 'lucide-react';
+import { X, GitCompare, Terminal as TerminalIcon } from 'lucide-react';
 import { FileTree } from '@/components/code/file-tree';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
@@ -28,6 +28,18 @@ const CodeDiff = dynamic(
     loading: () => (
       <div className="flex items-center justify-center h-full bg-[#1e1e1e]">
         <Spinner size="lg" />
+      </div>
+    ),
+  }
+);
+
+const Terminal = dynamic(
+  () => import('@/components/code/terminal'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center h-full bg-[#1a1b26]">
+        <Spinner size="sm" />
       </div>
     ),
   }
@@ -60,6 +72,10 @@ export default function CodePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const projectId = id;
+
+  // Terminal panel visibility
+  const [showTerminal, setShowTerminal] = useState(true);
 
   // Zustand store
   const files = useEditorStore((s) => s.files);
@@ -153,25 +169,36 @@ export default function CodePage({
           </button>
         </div>
 
-        {/* Code content */}
-        <div className="flex-1 min-h-0">
-          {activeTab ? (
-            isDiffMode ? (
-              <CodeDiff
-                original={originalCode}
-                modified={currentFileContent}
-                language={activeTab.language}
-              />
+        {/* Code content + Terminal area */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Code editor */}
+          <div className="flex-1 min-h-0">
+            {activeTab ? (
+              isDiffMode ? (
+                <CodeDiff
+                  original={originalCode}
+                  modified={currentFileContent}
+                  language={activeTab.language}
+                />
+              ) : (
+                <CodeEditor
+                  value={currentFileContent}
+                  language={activeTab.language}
+                  fileId={activeTab.fileId}
+                  projectId={projectId}
+                />
+              )
             ) : (
-              <CodeEditor
-                value={currentFileContent}
-                language={activeTab.language}
-                readOnly={true}
-              />
-            )
-          ) : (
-            <div className="flex items-center justify-center h-full bg-[#1e1e1e] text-zinc-500 text-sm">
-              从左侧文件树选择文件以查看代码
+              <div className="flex items-center justify-center h-full bg-[#1e1e1e] text-zinc-500 text-sm">
+                从左侧文件树选择文件以查看代码
+              </div>
+            )}
+          </div>
+
+          {/* Terminal panel */}
+          {showTerminal && (
+            <div className="h-64 flex-shrink-0 border-t border-[#292e42]">
+              <Terminal projectId={projectId} />
             </div>
           )}
         </div>
@@ -186,15 +213,26 @@ export default function CodePage({
               </>
             )}
           </div>
-          <div>
+          <div className="flex items-center gap-3">
             {activeTab && (
               <span>大小: {formatFileSize(
-                // Try to compute size from content
                 currentFileContent
                   ? new Blob([currentFileContent]).size
                   : undefined
               )}</span>
             )}
+            <button
+              onClick={() => setShowTerminal(!showTerminal)}
+              className={cn(
+                'flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors',
+                showTerminal
+                  ? 'text-brand-400 hover:text-brand-300'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              )}
+              title={showTerminal ? '隐藏终端' : '显示终端'}
+            >
+              <TerminalIcon className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </div>

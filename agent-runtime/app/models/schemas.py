@@ -1,5 +1,6 @@
 """Pydantic data models for request/response validation and Agent state."""
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -175,3 +176,70 @@ class HealthResponse(BaseModel):
     version: str
     uptime_seconds: float = 0.0
     services: dict[str, str] = Field(default_factory=dict)
+
+
+# --- Chat & Thinking Chain Models ---
+
+
+class ChatMessage(BaseModel):
+    """A chat message in agent conversation."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    role: str  # "user" | "assistant" | "system"
+    content: str
+    agent_id: str | None = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThinkingStepResponse(BaseModel):
+    """A single thinking step from an agent."""
+
+    step: str
+    thought: str
+    action: str | None = None
+    observation: str | None = None
+    timestamp: datetime
+
+
+class ThinkingChainResponse(BaseModel):
+    """Thinking chain for an agent execution."""
+
+    agent_id: str
+    agent_type: str
+    steps: list[ThinkingStepResponse]
+    total_steps: int
+
+
+class AgentChatRequest(BaseModel):
+    """Request for sending a chat message to an agent."""
+
+    message: str = Field(min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentChatResponse(BaseModel):
+    """Response from an agent chat."""
+
+    agent_id: str
+    message: ChatMessage
+    thinking_chain: ThinkingChainResponse | None = None
+    status: TaskStatus
+
+
+class ReviewFindingResponse(BaseModel):
+    """A structured review finding."""
+
+    category: str  # "critical" | "warning" | "suggestion"
+    title: str
+    description: str
+    location: str | None = None
+    suggestion: str | None = None
+
+
+class ReviewResultResponse(BaseModel):
+    """Structured review result."""
+
+    findings: list[ReviewFindingResponse]
+    summary: str
+    approved: bool

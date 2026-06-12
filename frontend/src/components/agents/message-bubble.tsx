@@ -49,7 +49,7 @@ export function MessageBubble({
             : 'bg-surface-2 text-zinc-300'
         )}
       >
-        {isUser ? '👤' : (agent ? agentEmojiMap[agent.type] ?? '🤖' : '🤖')}
+        {isUser ? '👤' : (agent ? agentEmojiMap[agent.agentType] ?? '🤖' : '🤖')}
       </div>
 
       {/* Message content area */}

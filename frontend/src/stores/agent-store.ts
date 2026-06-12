@@ -1,8 +1,12 @@
-// Agent state management with Zustand
+// Agent state management with Zustand - dual mode (mock/api) support
 
 import { create } from 'zustand';
 import type { Agent, ChatMessage, ThinkingChain, AgentConversation } from '@/types';
 import { mockAgents, mockMessages, mockThinkingChains } from '@/lib/mock-data';
+import { API_MODE } from '@/lib/constants';
+import { agentsApi, streamAgentChat } from '@/lib/api-client';
+
+const apiMode = API_MODE;
 
 interface AgentState {
   agents: Agent[];
@@ -22,12 +26,15 @@ interface AgentState {
   removeAgent: (id: string) => void;
   setCurrentAgent: (agent: Agent | null) => void;
   selectAgent: (id: string) => void;
+  fetchAgents: (projectId: string) => Promise<void>;
   setConversations: (conversations: AgentConversation[]) => void;
   setCurrentConversation: (conversation: AgentConversation | null) => void;
   setMessages: (messages: ChatMessage[]) => void;
   addMessage: (message: ChatMessage) => void;
   updateLastMessage: (content: string) => void;
   addThinkingChain: (chain: ThinkingChain) => void;
+  fetchThinkingChain: (agentId: string) => Promise<void>;
+  fetchMessages: (agentId: string, conversationId?: string) => Promise<void>;
   setStreaming: (isStreaming: boolean) => void;
   sendMessage: (content: string) => void;
   simulateAgentResponse: (messageId: string, fullContent: string) => void;
@@ -108,13 +115,30 @@ spec:
 部署配置已生成。`,
 };
 
-const initialState = {
+// In mock mode, initialize with mock data
+const mockDefaults = {
   agents: mockAgents,
   currentAgent: mockAgents[0],
   conversations: [mockConversation],
   currentConversation: mockConversation,
   messages: mockMessages,
   thinkingChains: mockThinkingChains,
+};
+
+// In API mode, start empty (data will be fetched)
+const apiDefaults = {
+  agents: [],
+  currentAgent: null,
+  conversations: [],
+  currentConversation: null,
+  messages: [],
+  thinkingChains: [],
+};
+
+const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
+
+const initialState = {
+  ...defaults,
   isStreaming: false,
   isLoading: false,
   error: null,
@@ -150,7 +174,10 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
 
   selectAgent: (id) => {
     const agent = get().agents.find((a) => a.id === id);
-    if (agent) {
+    if (!agent) return;
+
+    if (apiMode === 'mock') {
+      // Mock mode: find conversation from local state
       const conversation = get().conversations.find(
         (c) => c.agentId === id
       );
@@ -159,6 +186,35 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         currentConversation: conversation ?? null,
         messages: conversation?.messages ?? [],
       });
+      return;
+    }
+
+    // API mode: set agent and fetch conversation history
+    set({ currentAgent: agent, messages: [], currentConversation: null });
+    get().fetchMessages(id);
+  },
+
+  fetchAgents: async (projectId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: agents already loaded
+      return;
+    }
+
+    // API mode: fetch agents from backend
+    set({ isLoading: true, error: null });
+    try {
+      const response = await agentsApi.list();
+      const agents = response.data.data;
+      set({
+        agents,
+        currentAgent: agents[0] ?? null,
+        isLoading: false,
+      });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch agents';
+      set({ error: message, isLoading: false });
     }
   },
 
@@ -184,6 +240,45 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   addThinkingChain: (chain) =>
     set((state) => ({ thinkingChains: [...state.thinkingChains, chain] })),
 
+  fetchThinkingChain: async (agentId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: thinking chains already loaded
+      return;
+    }
+
+    // API mode: fetch thinking chain from backend
+    try {
+      const response = await agentsApi.thinkingChain(agentId);
+      set({ thinkingChains: response.data.data });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch thinking chain';
+      set({ error: message });
+    }
+  },
+
+  fetchMessages: async (agentId, conversationId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: messages already loaded
+      return;
+    }
+
+    // API mode: fetch messages from backend
+    set({ isLoading: true, error: null });
+    try {
+      const response = await agentsApi.messages(agentId, {
+        conversationId,
+      });
+      set({ messages: response.data.data, isLoading: false });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch messages';
+      set({ error: message, isLoading: false });
+    }
+  },
+
   setStreaming: (isStreaming) => set({ isStreaming }),
 
   sendMessage: (content) => {
@@ -196,7 +291,6 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       role: 'user',
       content,
       agentId: currentAgent.id,
-      projectId: currentConversation?.projectId ?? 'proj-1',
       timestamp: new Date().toISOString(),
     };
 
@@ -207,7 +301,6 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       role: 'assistant',
       content: '',
       agentId: currentAgent.id,
-      projectId: currentConversation?.projectId ?? 'proj-1',
       timestamp: new Date().toISOString(),
     };
 
@@ -216,18 +309,53 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       isStreaming: true,
     }));
 
-    // Set agent to thinking status
-    get().updateAgent(currentAgent.id, { status: 'thinking' });
+    // Set agent to planning status
+    get().updateAgent(currentAgent.id, { status: 'planning' });
 
-    // Simulate response after a short delay
-    const responseContent =
-      agentResponses[currentAgent.id] ??
-      '我已收到您的消息，正在处理中...';
+    if (apiMode === 'mock') {
+      // Mock mode: simulate response after a short delay
+      const responseContent =
+        agentResponses[currentAgent.id] ??
+        '我已收到您的消息，正在处理中...';
 
-    setTimeout(() => {
-      get().updateAgent(currentAgent.id, { status: 'running' });
-      get().simulateAgentResponse(assistantMessageId, responseContent);
-    }, 800);
+      setTimeout(() => {
+        get().updateAgent(currentAgent.id, { status: 'executing' });
+        get().simulateAgentResponse(assistantMessageId, responseContent);
+      }, 800);
+      return;
+    }
+
+    // API mode: use SSE streaming for real-time response
+    streamAgentChat(
+      currentAgent.id,
+      {
+        message: content,
+        conversationId: currentConversation?.id,
+      },
+      {
+        onStart: () => {
+          get().updateAgent(currentAgent.id, { status: 'executing' });
+        },
+        onDelta: (fullContent) => {
+          get().updateLastMessage(fullContent);
+        },
+        onEnd: (fullContent) => {
+          get().updateLastMessage(fullContent);
+          get().updateAgent(currentAgent.id, { status: 'completed' });
+          set({ isStreaming: false });
+        },
+        onError: (errorMsg) => {
+          get().updateLastMessage(`Error: ${errorMsg}`);
+          get().updateAgent(currentAgent.id, { status: 'failed' });
+          set({ isStreaming: false, error: errorMsg });
+        },
+      }
+    ).catch((err) => {
+      const message = (err as Error).message ?? 'Failed to send message';
+      get().updateLastMessage(`Error: ${message}`);
+      get().updateAgent(currentAgent.id, { status: 'failed' });
+      set({ isStreaming: false, error: message });
+    });
   },
 
   simulateAgentResponse: (messageId, fullContent) => {
@@ -242,7 +370,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         // Mark streaming complete
         const currentAgent = get().currentAgent;
         if (currentAgent) {
-          get().updateAgent(currentAgent.id, { status: 'idle' });
+          get().updateAgent(currentAgent.id, { status: 'pending' });
         }
         set({ isStreaming: false });
         return;

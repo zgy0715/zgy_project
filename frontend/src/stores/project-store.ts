@@ -1,8 +1,12 @@
-// Project state management with Zustand
+// Project state management with Zustand - dual mode (mock/api) support
 
 import { create } from 'zustand';
-import type { Project, ProjectActivity, CreateProjectRequest } from '@/types';
+import type { Project, ProjectActivity, CreateProjectRequest, UpdateProjectRequest } from '@/types';
 import { mockProjects, mockActivities } from '@/lib/mock-data';
+import { API_MODE } from '@/lib/constants';
+import { projectsApi } from '@/lib/api-client';
+
+const apiMode = API_MODE;
 
 interface ProjectState {
   projects: Project[];
@@ -18,7 +22,11 @@ interface ProjectState {
   removeProject: (id: string) => void;
   setCurrentProject: (project: Project | null) => void;
   setCurrentProjectById: (id: string) => void;
-  createProject: (request: CreateProjectRequest) => void;
+  fetchProjects: () => Promise<void>;
+  createProject: (request: CreateProjectRequest) => Promise<void>;
+  saveProject: (id: string, data: UpdateProjectRequest) => Promise<void>;
+  deleteProject: (id: string) => Promise<void>;
+  fetchActivities: (projectId: string) => Promise<void>;
   setActivities: (activities: ProjectActivity[]) => void;
   addActivity: (activity: ProjectActivity) => void;
   setLoading: (loading: boolean) => void;
@@ -26,11 +34,24 @@ interface ProjectState {
   clearError: () => void;
 }
 
-export const useProjectStore = create<ProjectState>()((set) => ({
-  // Initialize with mock project data
+// In mock mode, initialize with mock project data
+const mockDefaults = {
   projects: mockProjects,
   currentProject: mockProjects[0],
   activities: mockActivities,
+};
+
+// In API mode, start empty (data will be fetched)
+const apiDefaults = {
+  projects: [],
+  currentProject: null,
+  activities: [],
+};
+
+const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
+
+export const useProjectStore = create<ProjectState>()((set, get) => ({
+  ...defaults,
   isLoading: false,
   error: null,
 
@@ -64,8 +85,33 @@ export const useProjectStore = create<ProjectState>()((set) => ({
       currentProject: state.projects.find((p) => p.id === id) ?? null,
     })),
 
-  createProject: (request) =>
-    set((state) => {
+  fetchProjects: async () => {
+    if (apiMode === 'mock') {
+      // Mock mode: data is already loaded
+      return;
+    }
+
+    // API mode: fetch projects from backend
+    set({ isLoading: true, error: null });
+    try {
+      const response = await projectsApi.list();
+      const projects = response.data.data;
+      set({
+        projects,
+        currentProject: projects[0] ?? null,
+        isLoading: false,
+      });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch projects';
+      set({ error: message, isLoading: false });
+    }
+  },
+
+  createProject: async (request) => {
+    if (apiMode === 'mock') {
+      // Mock mode: create project locally
       const newProject: Project = {
         id: `proj-${Date.now()}`,
         name: request.name,
@@ -93,11 +139,91 @@ export const useProjectStore = create<ProjectState>()((set) => ({
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      return {
+      set((state) => ({
         projects: [newProject, ...state.projects],
         currentProject: newProject,
-      };
-    }),
+      }));
+      return;
+    }
+
+    // API mode: create project via API
+    set({ isLoading: true, error: null });
+    try {
+      const response = await projectsApi.create(request);
+      const newProject = response.data.data;
+      set((state) => ({
+        projects: [newProject, ...state.projects],
+        currentProject: newProject,
+        isLoading: false,
+      }));
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to create project';
+      set({ error: message, isLoading: false });
+    }
+  },
+
+  saveProject: async (id, data) => {
+    if (apiMode === 'mock') {
+      // Mock mode: update project locally
+      get().updateProject(id, data);
+      return;
+    }
+
+    // API mode: update project via API
+    set({ isLoading: true, error: null });
+    try {
+      const response = await projectsApi.update(id, data);
+      const updated = response.data.data;
+      get().updateProject(id, updated);
+      set({ isLoading: false });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to update project';
+      set({ error: message, isLoading: false });
+    }
+  },
+
+  deleteProject: async (id) => {
+    if (apiMode === 'mock') {
+      // Mock mode: remove project locally
+      get().removeProject(id);
+      return;
+    }
+
+    // API mode: delete project via API
+    set({ isLoading: true, error: null });
+    try {
+      await projectsApi.delete(id);
+      get().removeProject(id);
+      set({ isLoading: false });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to delete project';
+      set({ error: message, isLoading: false });
+    }
+  },
+
+  fetchActivities: async (projectId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: activities already loaded
+      return;
+    }
+
+    // API mode: fetch activities from backend
+    try {
+      const response = await projectsApi.activity(projectId);
+      set({ activities: response.data.data });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch activities';
+      set({ error: message });
+    }
+  },
 
   setActivities: (activities) => set({ activities }),
 

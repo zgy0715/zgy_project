@@ -6,13 +6,16 @@ export interface Project {
   id: string;
   name: string;
   description: string;
-  status: ProjectStatus;
   ownerId: string;
-  members: ProjectMember[];
-  techStack: string[];
+  status: ProjectStatus;
+  agentType?: string;
+  config?: string;
+  // Frontend-only fields for UI display
+  members?: ProjectMember[];
+  techStack?: string[];
   repository?: string;
   workflowId?: string;
-  stats: ProjectStats;
+  stats?: ProjectStats;
   createdAt: string;
   updatedAt: string;
 }

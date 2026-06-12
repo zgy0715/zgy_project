@@ -54,7 +54,7 @@ export function ThinkingChain({
             <div className="divide-y divide-surface-3">
               {chain.steps.map((step, index) => (
                 <motion.div
-                  key={step.id}
+                  key={step.step}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}

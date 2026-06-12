@@ -6,37 +6,24 @@ from typing import Any
 from app.agents.base import BaseAgent
 from app.models.enums import AgentType, MessageRole
 from app.models.schemas import Message
+from app.utils.prompt_templates import PromptTemplates
 
 logger = logging.getLogger(__name__)
-
-DEPLOYER_SYSTEM_PROMPT = """You are a Deployer Agent in the DeepAgent system.
-Your primary responsibility is to generate deployment configurations and infrastructure code.
-
-Key responsibilities:
-- Generate Dockerfile and docker-compose configurations
-- Create CI/CD pipeline configurations (GitHub Actions, GitLab CI, etc.)
-- Produce Kubernetes manifests and Helm charts
-- Configure environment variables and secrets management
-- Set up monitoring and logging configurations
-
-Deployment principles:
-- Follow infrastructure-as-code best practices
-- Ensure reproducible and deterministic deployments
-- Implement proper health checks and readiness probes
-- Configure appropriate resource limits
-- Use multi-stage builds for optimized images
-"""
 
 
 class DeployerAgent(BaseAgent):
     """Agent responsible for deployment configuration generation.
 
     The Deployer Agent generates infrastructure code, Docker configurations,
-    CI/CD pipelines, and other deployment-related artifacts.
+    CI/CD pipelines, and other deployment-related artifacts. Can write
+    generated configs to files when the file_write tool is available.
 
     Attributes:
         agent_type: Always AgentType.DEPLOYER.
+        default_tools: Auto-injected tools for deployment tasks.
     """
+
+    default_tools = ["file_read", "file_write", "terminal", "git_ops"]
 
     @property
     def agent_type(self) -> AgentType:
@@ -58,8 +45,15 @@ class DeployerAgent(BaseAgent):
         """
         logger.info("DeployerAgent '%s' planning deployment: %s", self.name, task)
 
+        self.add_thinking_step(
+            step="plan",
+            thought=f"Planning deployment for: {task[:200]}",
+        )
+
+        system_prompt = PromptTemplates.get_system_prompt("deployer")
+
         messages = [
-            Message(role=MessageRole.SYSTEM, content=DEPLOYER_SYSTEM_PROMPT),
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
             Message(role=MessageRole.USER, content=(
                 f"Create a deployment configuration plan for the following task.\n\n"
                 f"Task: {task}\n"
@@ -79,12 +73,20 @@ class DeployerAgent(BaseAgent):
             max_tokens=2048,
         )
 
+        self.add_thinking_step(
+            step="plan",
+            thought="Deployment plan created",
+            observation=plan[:200] if plan else "",
+        )
+
         return plan
 
     async def execute(self, plan: str, context: dict[str, Any]) -> str:
         """Execute the deployment configuration plan using the LLM.
 
         Generates deployment artifacts using available tools and the LLM.
+        Writes generated configs to files when the file_write tool is
+        available and output paths are specified.
 
         Args:
             plan: The deployment plan.
@@ -95,16 +97,34 @@ class DeployerAgent(BaseAgent):
         """
         logger.info("DeployerAgent '%s' executing deployment plan", self.name)
 
+        self.add_thinking_step(
+            step="execute",
+            thought="Starting deployment config generation",
+        )
+
+        system_prompt = PromptTemplates.get_system_prompt("deployer")
+
         tech_stack = context.get("tech_stack", [])
         project_name = context.get("project_name", "project")
 
-        messages = [
-            Message(role=MessageRole.SYSTEM, content=DEPLOYER_SYSTEM_PROMPT),
-            Message(role=MessageRole.USER, content=(
-                f"Generate deployment configurations based on the following plan.\n\n"
-                f"Plan: {plan}\n"
-                f"Project: {project_name}\n"
+        try:
+            task_prompt = PromptTemplates.render(
+                "deployment",
+                project_name=project_name,
+                tech_stack=", ".join(tech_stack) if tech_stack else "unknown",
+                code_summary=plan,
+            )
+        except (ValueError, KeyError):
+            task_prompt = (
+                f"Generate deployment configurations for project: {project_name}\n"
                 f"Tech stack: {', '.join(tech_stack) if tech_stack else 'unknown'}\n"
+                f"Plan: {plan}"
+            )
+
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
+            Message(role=MessageRole.USER, content=(
+                f"{task_prompt}\n\n"
                 f"Context: {context}\n\n"
                 f"Generate:\n"
                 f"1. Dockerfile with multi-stage build\n"
@@ -124,6 +144,25 @@ class DeployerAgent(BaseAgent):
             temperature=0.2,
             max_tokens=8192,
         )
+
+        self.add_thinking_step(
+            step="execute",
+            thought="Deployment config generated",
+            action=f"Generated {len(deployment_config)} chars of config",
+        )
+
+        # Write generated config to file if output path is specified
+        if "file_write" in self.tool_map and "output_file" in context:
+            await self.use_tool(
+                "file_write",
+                path=context["output_file"],
+                content=deployment_config,
+            )
+            self.add_thinking_step(
+                step="execute",
+                thought="Wrote deployment config to file",
+                action=f"file_write: {context['output_file']}",
+            )
 
         self.artifacts.append({
             "type": "deployment_config",
@@ -148,8 +187,15 @@ class DeployerAgent(BaseAgent):
         """
         logger.info("DeployerAgent '%s' reflecting on deployment config", self.name)
 
+        self.add_thinking_step(
+            step="reflect",
+            thought="Reviewing deployment config for best practices",
+        )
+
+        system_prompt = PromptTemplates.get_system_prompt("deployer")
+
         messages = [
-            Message(role=MessageRole.SYSTEM, content=DEPLOYER_SYSTEM_PROMPT),
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
             Message(role=MessageRole.USER, content=(
                 f"Review the following deployment configurations for best practices.\n\n"
                 f"Deployment config:\n{execution_result}\n\n"
@@ -166,6 +212,12 @@ class DeployerAgent(BaseAgent):
             messages=messages,
             temperature=0.3,
             max_tokens=4096,
+        )
+
+        self.add_thinking_step(
+            step="reflect",
+            thought="Reflection completed",
+            observation=reflection[:200] if reflection else "",
         )
 
         return reflection

@@ -70,7 +70,10 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
 
   const currentWorkflow = useWorkflowStore((s) => s.currentWorkflow);
   const isExecuting = useWorkflowStore((s) => s.isExecuting);
+  const isPaused = useWorkflowStore((s) => s.isPaused);
   const runWorkflow = useWorkflowStore((s) => s.runWorkflow);
+  const pauseWorkflow = useWorkflowStore((s) => s.pauseWorkflow);
+  const resumeWorkflow = useWorkflowStore((s) => s.resumeWorkflow);
   const resetWorkflow = useWorkflowStore((s) => s.resetWorkflow);
   const selectNode = useWorkflowStore((s) => s.selectNode);
   const updateWorkflow = useWorkflowStore((s) => s.updateWorkflow);
@@ -82,9 +85,9 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
     () =>
       currentWorkflow?.nodes.map((n) => ({
         id: n.id,
-        type: n.type,
-        position: n.position,
-        data: n.data,
+        type: n.type ?? 'agent',
+        position: n.position ?? { x: 0, y: 0 },
+        data: n.data ?? { label: n.name, agentType: n.agentType },
       })) ?? [],
     [currentWorkflow?.nodes]
   );
@@ -92,11 +95,11 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
   // Convert store edges to ReactFlow edges
   const edges: Edge[] = useMemo(
     () =>
-      currentWorkflow?.edges.map((e) => ({
-        id: e.id,
+      currentWorkflow?.edges.map((e, index) => ({
+        id: e.id ?? `edge-${index}`,
         source: e.source,
         target: e.target,
-        type: e.type,
+        type: e.type ?? 'default',
         label: e.label,
         animated: e.animated ?? false,
         data: { edgeType: e.type, label: e.condition },
@@ -174,7 +177,7 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
     if (!currentWorkflow) return;
     const layoutNodes = currentWorkflow.nodes.map((n) => ({
       ...n,
-      position: autoLayoutPositions[n.id] ?? n.position,
+      position: autoLayoutPositions[n.id] ?? n.position ?? { x: 0, y: 0 },
     }));
     updateWorkflow(currentWorkflow.id, { nodes: layoutNodes });
     // Fit view after layout
@@ -194,10 +197,14 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
     reactFlowInstance.fitView({ padding: 0.2 });
   }, [reactFlowInstance]);
 
-  // Pause handler (placeholder — store doesn't have pause logic yet)
+  // Pause/resume handler
   const handlePause = useCallback(() => {
-    // Could be extended with pause logic in the store
-  }, []);
+    if (isPaused) {
+      resumeWorkflow();
+    } else {
+      pauseWorkflow();
+    }
+  }, [isPaused, pauseWorkflow, resumeWorkflow]);
 
   return (
     <div className="relative w-full h-full">
@@ -211,6 +218,7 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
         onZoomOut={handleZoomOut}
         onFitView={handleFitView}
         isExecuting={isExecuting}
+        isPaused={isPaused}
         workflowStatus={currentWorkflow?.status ?? 'draft'}
       />
 

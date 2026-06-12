@@ -1,33 +1,51 @@
 """Reviewer Agent implementation - responsible for code review."""
 
+import json
 import logging
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.enums import AgentType, MessageRole
 from app.models.schemas import Message
+from app.utils.prompt_templates import PromptTemplates
 
 logger = logging.getLogger(__name__)
 
-REVIEWER_SYSTEM_PROMPT = """You are a Reviewer Agent in the DeepAgent system.
-Your primary responsibility is to review code for quality, correctness, and best practices.
 
-Key responsibilities:
-- Review code changes for correctness and potential bugs
-- Check adherence to coding standards and best practices
-- Identify security vulnerabilities
-- Suggest improvements and optimizations
-- Verify that code meets the task requirements
+@dataclass
+class ReviewFinding:
+    """A single finding from a code review.
 
-Review criteria:
-- Code correctness and logic errors
-- Error handling completeness
-- Type hint coverage
-- Documentation quality
-- Security considerations
-- Performance implications
-- Test coverage suggestions
-"""
+    Attributes:
+        category: Severity category — critical, warning, or suggestion.
+        title: Short summary of the finding.
+        description: Detailed explanation of the issue.
+        location: File path or code location (optional).
+        suggestion: Suggested fix or improvement (optional).
+    """
+
+    category: str  # "critical" | "warning" | "suggestion"
+    title: str
+    description: str
+    location: str = ""
+    suggestion: str = ""
+
+
+@dataclass
+class ReviewResult:
+    """Structured result of a code review.
+
+    Attributes:
+        findings: List of review findings categorized by severity.
+        summary: Overall assessment summary.
+        approved: Whether the code passes review.
+    """
+
+    findings: list[ReviewFinding] = field(default_factory=list)
+    summary: str = ""
+    approved: bool = True
 
 
 class ReviewerAgent(BaseAgent):
@@ -35,10 +53,15 @@ class ReviewerAgent(BaseAgent):
 
     The Reviewer Agent analyzes code changes and provides structured
     feedback on quality, correctness, security, and best practices.
+    Produces categorized findings (critical/warning/suggestion) and
+    can read files directly when the file_read tool is available.
 
     Attributes:
         agent_type: Always AgentType.REVIEWER.
+        default_tools: Auto-injected tools for code review.
     """
+
+    default_tools = ["file_read", "code_search"]
 
     @property
     def agent_type(self) -> AgentType:
@@ -60,8 +83,15 @@ class ReviewerAgent(BaseAgent):
         """
         logger.info("ReviewerAgent '%s' planning review: %s", self.name, task)
 
+        self.add_thinking_step(
+            step="plan",
+            thought=f"Planning code review for: {task[:200]}",
+        )
+
+        system_prompt = PromptTemplates.get_system_prompt("reviewer")
+
         messages = [
-            Message(role=MessageRole.SYSTEM, content=REVIEWER_SYSTEM_PROMPT),
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
             Message(role=MessageRole.USER, content=(
                 f"Create a structured code review plan for the following task.\n\n"
                 f"Task: {task}\n"
@@ -81,13 +111,19 @@ class ReviewerAgent(BaseAgent):
             max_tokens=2048,
         )
 
+        self.add_thinking_step(
+            step="plan",
+            thought="Review plan created",
+            observation=plan[:200] if plan else "",
+        )
+
         return plan
 
     async def execute(self, plan: str, context: dict[str, Any]) -> str:
         """Execute the code review plan using the LLM.
 
         Analyzes the code using available tools and generates
-        structured review feedback.
+        structured review feedback with categorized findings.
 
         Args:
             plan: The review plan.
@@ -98,26 +134,62 @@ class ReviewerAgent(BaseAgent):
         """
         logger.info("ReviewerAgent '%s' executing review plan", self.name)
 
-        # Extract the code from context or task
+        self.add_thinking_step(
+            step="execute",
+            thought="Starting code review execution",
+        )
+
+        system_prompt = PromptTemplates.get_system_prompt("reviewer")
+
+        # Read actual file if file_read tool is available and path is provided
         code_to_review = context.get("code", "")
+        if not code_to_review and "file_read" in self.tool_map:
+            target_file = context.get("target_file", context.get("file_path", ""))
+            if target_file:
+                result = await self.use_tool("file_read", path=target_file)
+                if result.success:
+                    code_to_review = result.output
+                    self.add_thinking_step(
+                        step="execute",
+                        thought=f"Read file for review: {target_file}",
+                        action="file_read",
+                    )
+
         if not code_to_review and "review" in plan.lower():
-            # Try to extract code from the task description
             code_to_review = plan
 
+        # Determine if security-focused review is needed
+        is_security_review = context.get("security_review", False)
+        template_name = "security_review" if is_security_review else "code_review"
+
+        try:
+            task_prompt = PromptTemplates.render(
+                template_name,
+                code=code_to_review,
+                task=plan,
+            )
+        except (ValueError, KeyError):
+            task_prompt = PromptTemplates.render(
+                "code_review",
+                code=code_to_review,
+                task=plan,
+            )
+
         messages = [
-            Message(role=MessageRole.SYSTEM, content=REVIEWER_SYSTEM_PROMPT),
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
             Message(role=MessageRole.USER, content=(
-                f"Review the following code thoroughly.\n\n"
-                f"Plan context: {plan}\n"
-                f"{'Code to review:\n' + code_to_review if code_to_review else ''}\n"
-                f"Context: {context}\n\n"
-                f"Provide structured feedback:\n"
-                f"## Issues Found\n"
-                f"- Critical: ...\n"
-                f"- Warning: ...\n"
-                f"- Suggestion: ...\n\n"
-                f"## Summary\n"
-                f"Overall assessment and recommended actions."
+                f"{task_prompt}\n\n"
+                f"Provide structured feedback in the following format:\n"
+                f"```json\n"
+                f"{{\n"
+                f'  "findings": [\n'
+                f'    {{"category": "critical|warning|suggestion", "title": "...", '
+                f'"description": "...", "location": "...", "suggestion": "..."}}\n'
+                f"  ],\n"
+                f'  "summary": "Overall assessment",\n'
+                f'  "approved": true|false\n'
+                f"}}\n"
+                f"```\n"
             )),
         ]
 
@@ -127,11 +199,23 @@ class ReviewerAgent(BaseAgent):
             max_tokens=4096,
         )
 
+        # Parse structured review output
+        review_result = self._parse_review_output(review)
+
+        self.add_thinking_step(
+            step="execute",
+            thought=f"Review completed: {len(review_result.findings)} findings, "
+                    f"approved={review_result.approved}",
+            observation=review_result.summary[:200] if review_result.summary else "",
+        )
+
         self.artifacts.append({
             "type": "code_review",
             "plan": plan,
             "status": "completed",
             "review_length": len(review),
+            "findings_count": len(review_result.findings),
+            "approved": review_result.approved,
         })
 
         return review
@@ -150,8 +234,15 @@ class ReviewerAgent(BaseAgent):
         """
         logger.info("ReviewerAgent '%s' reflecting on review", self.name)
 
+        self.add_thinking_step(
+            step="reflect",
+            thought="Reflecting on review completeness",
+        )
+
+        system_prompt = PromptTemplates.get_system_prompt("reviewer")
+
         messages = [
-            Message(role=MessageRole.SYSTEM, content=REVIEWER_SYSTEM_PROMPT),
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
             Message(role=MessageRole.USER, content=(
                 f"Review the following code review output for completeness.\n\n"
                 f"Review output:\n{execution_result}\n\n"
@@ -169,4 +260,55 @@ class ReviewerAgent(BaseAgent):
             max_tokens=2048,
         )
 
+        self.add_thinking_step(
+            step="reflect",
+            thought="Reflection completed",
+            observation=reflection[:200] if reflection else "",
+        )
+
         return reflection
+
+    def _parse_review_output(self, review_text: str) -> ReviewResult:
+        """Parse LLM review output into a structured ReviewResult.
+
+        Attempts to extract a JSON block from the review text and
+        parse it into ReviewFinding objects. Falls back to a simple
+        result with the raw text as summary if parsing fails.
+
+        Args:
+            review_text: The raw LLM review output.
+
+        Returns:
+            A ReviewResult with parsed findings.
+        """
+        # Try to extract JSON block
+        json_match = re.search(r"```json\s*(.*?)\s*```", review_text, re.DOTALL)
+        if not json_match:
+            json_match = re.search(r"\{.*\}", review_text, re.DOTALL)
+
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1) if json_match.lastindex else json_match.group(0))
+                findings: list[ReviewFinding] = []
+                for f in data.get("findings", []):
+                    findings.append(ReviewFinding(
+                        category=f.get("category", "suggestion"),
+                        title=f.get("title", ""),
+                        description=f.get("description", ""),
+                        location=f.get("location", ""),
+                        suggestion=f.get("suggestion", ""),
+                    ))
+                return ReviewResult(
+                    findings=findings,
+                    summary=data.get("summary", ""),
+                    approved=data.get("approved", True),
+                )
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        # Fallback: return raw text as summary
+        return ReviewResult(
+            findings=[],
+            summary=review_text[:500],
+            approved=True,
+        )

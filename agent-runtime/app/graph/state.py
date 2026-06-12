@@ -51,6 +51,11 @@ class WorkflowState(TypedDict, total=False):
     artifacts: list[dict[str, Any]]
     errors: list[str]
 
+    # Structured analysis data
+    thinking_steps: list[dict[str, Any]]
+    review_findings: list[dict[str, Any]]
+    test_results: dict[str, Any]
+
 
 def create_initial_state(task: str, context: dict[str, Any] | None = None) -> WorkflowState:
     """Create an initial workflow state for a new task.
@@ -77,4 +82,7 @@ def create_initial_state(task: str, context: dict[str, Any] | None = None) -> Wo
         messages=[],
         artifacts=[],
         errors=[],
+        thinking_steps=[],
+        review_findings=[],
+        test_results={},
     )

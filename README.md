@@ -375,7 +375,7 @@ agent-runtime/
 </details>
 
 <details>
-<summary>🟠 API 网关 — <code>api-gateway/</code> (53 文件)</summary>
+<summary>🟠 API 网关 — <code>api-gateway/</code> (53 文件) — 90% 完成</summary>
 
 ```
 api-gateway/
@@ -385,14 +385,19 @@ api-gateway/
 │   ├── config/                 # 配置类
 │   │   ├── SecurityConfig.java #   Spring Security + JWT
 │   │   ├── WebSocketConfig.java#   STOMP WebSocket
+│   │   ├── WebSocketAuthInterceptor.java # STOMP JWT 认证拦截器
 │   │   ├── GrpcConfig.java     #   gRPC 客户端
 │   │   ├── RedisConfig.java    #   Redis 序列化
 │   │   ├── RabbitMQConfig.java #   交换机/队列定义
 │   │   └── CorsConfig.java     #   CORS 跨域
-│   ├── auth/                   # 🔐 认证模块 (JWT 双令牌 + Redis 黑名单)
+│   ├── auth/                   # 🔐 认证模块 (JWT 双令牌 + Redis 黑名单 + 登出)
 │   ├── project/                # 📁 项目管理 (CRUD)
 │   ├── scheduler/              # ⏱ DAG 任务调度 (Kahn 拓扑排序 + Virtual Threads 并行)
-│   ├── orchestrator/           # 🎼 Agent 编排 (gRPC 调用 Python)
+│   ├── orchestrator/           # 🎼 Agent 编排
+│   │   ├── controller/         #   AgentController + WorkflowController (REST 代理)
+│   │   ├── client/             #   AgentRestClient (WebClient → Python FastAPI)
+│   │   ├── AgentOrchestrator.java # 编排服务
+│   │   └── AgentServiceGrpcClient.java # gRPC 客户端
 │   ├── websocket/              # 📡 实时推送 (STOMP)
 │   └── common/                 # 通用组件 (异常处理/统一响应/参数校验)
 ├── src/main/resources/
@@ -407,7 +412,7 @@ api-gateway/
 </details>
 
 <details>
-<summary>⚛️ 前端 — <code>frontend/</code> (63 文件)</summary>
+<summary>⚛️ 前端 — <code>frontend/</code> (63 文件) — 95% 完成</summary>
 
 ```
 frontend/
@@ -415,18 +420,18 @@ frontend/
 │   ├── app/                    # 📄 App Router 页面
 │   │   ├── layout.tsx          #   根布局
 │   │   ├── page.tsx            #   Landing Page
-│   │   ├── (auth)/             #   登录/注册
+│   │   ├── (auth)/             #   登录/注册 (已对接API)
 │   │   └── (dashboard)/        #   仪表盘 (项目列表/详情/工作流/Agent/代码)
 │   ├── components/
 │   │   ├── ui/                 # 🧩 基础 UI 组件 (Button/Input/Card/Badge/Dialog/Toast/Spinner)
-│   │   ├── layout/             # 📐 布局组件 (Sidebar/Header/UserMenu)
-│   │   ├── workflow/           # 🎨 工作流编辑器 (ReactFlow DAG/Agent 节点/条件边/工具栏)
+│   │   ├── layout/             # 📐 布局组件 (Sidebar/Header — 已被Dashboard使用)
+│   │   ├── workflow/           # 🎨 工作流编辑器 (ReactFlow DAG/Agent 节点/条件边/工具栏/暂停恢复)
 │   │   ├── agents/             # 🤖 Agent 交互 (对话面板/消息气泡/状态指示/思考链/选择器)
-│   │   ├── code/               # 💻 代码编辑器 (Monaco/Diff/文件树/终端)
+│   │   ├── code/               # 💻 代码编辑器 (Monaco 编辑模式/Diff/文件树/xterm.js终端)
 │   │   └── dashboard/          # 📊 仪表盘 (统计卡片/活动流/性能图表)
-│   ├── stores/                 # 📦 Zustand 状态管理 (auth/project/agent/workflow/editor)
-│   ├── lib/                    # 🔧 工具库 (API 客户端/WebSocket/工具函数/Hooks)
-│   └── types/                  # 📝 TypeScript 类型定义
+│   ├── stores/                 # 📦 Zustand 状态管理 (5个Store, mock/api双模式)
+│   ├── lib/                    # 🔧 工具库 (API客户端/STOMP WebSocket/SSE流式/Hooks)
+│   └── types/                  # 📝 TypeScript 类型定义 (与后端对齐)
 └── Dockerfile
 ```
 
@@ -442,9 +447,9 @@ frontend/
 - [x] Agent 运行时 (LangGraph + FastAPI)
 - [x] 前端 Demo (Next.js — 6页面/50+组件/Mock数据)
 - [x] 可视化工作流编辑器 (ReactFlow DAG)
-- [ ] Coder & Reviewer Agent 业务逻辑深化
-- [ ] API 网关 (Spring Boot 业务实现)
-- [ ] 前端 API 对接 & WebSocket 实时通信
+- [x] Coder & Reviewer Agent 业务逻辑深化 (工具注入/结构化审查/LLM路由/自定义DAG)
+- [x] API 网关 (Spring Boot 业务实现 — Agent/Workflow代理/REST客户端/登出/WebSocket认证)
+- [x] 前端 API 对接 & WebSocket 实时通信 (STOMP/双模式Store/SSE流式/xterm.js终端)
 - [ ] 端到端集成联调
 - [ ] 性能优化与基准测试
 - [ ] 演示视频与文档

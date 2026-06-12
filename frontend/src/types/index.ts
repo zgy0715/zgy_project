@@ -11,7 +11,7 @@ export interface User {
 }
 
 export interface LoginRequest {
-  email: string;
+  username: string;
   password: string;
 }
 
@@ -22,9 +22,13 @@ export interface RegisterRequest {
 }
 
 export interface AuthResponse {
-  token: string;
+  accessToken: string;
   refreshToken: string;
-  user: User;
+  tokenType: string;
+  expiresIn: number;
+  username: string;
+  email: string;
+  role: string;
 }
 
 // API response wrapper
@@ -42,7 +46,7 @@ export interface PaginatedResponse<T> {
   totalPages: number;
 }
 
-// WebSocket event types
+// WebSocket event types (legacy Socket.IO - kept for backward compatibility)
 export interface WSEvent {
   type: string;
   payload: unknown;
@@ -75,6 +79,30 @@ export interface AgentStatusEvent {
     agentId: string;
     status: string;
   };
+}
+
+// STOMP event types (matching Spring Boot backend)
+export interface StompAgentEvent {
+  eventType: 'TASK_STARTED' | 'AGENT_OUTPUT' | 'TASK_COMPLETED' | 'TASK_FAILED';
+  taskId: string;
+  agentType: string;
+  output?: string;
+  timestamp: string;
+}
+
+export interface StompWorkflowEvent {
+  eventType: 'NODE_STATUS_CHANGED' | 'WORKFLOW_COMPLETED' | 'WORKFLOW_FAILED';
+  workflowId: string;
+  nodeId?: string;
+  nodeStatus?: string;
+  timestamp: string;
+}
+
+export interface StompNotificationEvent {
+  type: string;
+  message: string;
+  data?: unknown;
+  timestamp: string;
 }
 
 // Re-export domain types

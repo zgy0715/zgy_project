@@ -3,6 +3,7 @@ package com.deepagent.config;
 import com.deepagent.websocket.AgentWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
@@ -26,6 +27,7 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final AgentWebSocketHandler agentWebSocketHandler;
+    private final WebSocketAuthInterceptor webSocketAuthInterceptor;
 
     /**
      * Configures the message broker for STOMP messaging.
@@ -49,5 +51,18 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registry.addEndpoint("/ws")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();
+    }
+
+    /**
+     * Configures the client inbound channel to authenticate STOMP CONNECT frames.
+     *
+     * <p>Registers the {@link WebSocketAuthInterceptor} to validate JWT tokens
+     * from STOMP CONNECT headers before processing any messages.</p>
+     *
+     * @param registration the channel registration
+     */
+    @Override
+    public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.interceptors(webSocketAuthInterceptor);
     }
 }

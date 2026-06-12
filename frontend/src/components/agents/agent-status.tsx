@@ -13,35 +13,40 @@ const statusConfig: Record<
   AgentStatus,
   { dot: string; label: string; badge: string }
 > = {
-  idle: {
+  pending: {
     dot: 'bg-slate-400',
-    label: '空闲',
+    label: '等待中',
     badge: 'bg-slate-400/15 text-slate-400',
   },
-  thinking: {
+  planning: {
     dot: 'bg-amber-500 animate-thinking',
-    label: '思考中',
+    label: '规划中',
     badge: 'bg-amber-500/15 text-amber-400',
   },
-  running: {
+  executing: {
     dot: 'bg-blue-500',
-    label: '工作中',
+    label: '执行中',
     badge: 'bg-blue-500/15 text-blue-400',
   },
-  success: {
+  reviewing: {
+    dot: 'bg-violet-500',
+    label: '审查中',
+    badge: 'bg-violet-500/15 text-violet-400',
+  },
+  completed: {
     dot: 'bg-green-500',
     label: '完成',
     badge: 'bg-green-500/15 text-green-400',
   },
-  error: {
+  failed: {
     dot: 'bg-red-500',
     label: '错误',
     badge: 'bg-red-500/15 text-red-400',
   },
-  waiting: {
-    dot: 'bg-violet-500',
-    label: '等待中',
-    badge: 'bg-violet-500/15 text-violet-400',
+  cancelled: {
+    dot: 'bg-zinc-500',
+    label: '已取消',
+    badge: 'bg-zinc-500/15 text-zinc-400',
   },
 };
 

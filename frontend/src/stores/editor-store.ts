@@ -1,8 +1,12 @@
-// Editor state management with Zustand
+// Editor state management with Zustand - dual mode (mock/api) support
 
 import { create } from 'zustand';
 import type { ProjectFile } from '@/types';
 import { mockFileTree, mockFileContents } from '@/lib/mock-data';
+import { API_MODE } from '@/lib/constants';
+import { projectsApi } from '@/lib/api-client';
+
+const apiMode = API_MODE;
 
 interface EditorTab {
   id: string;
@@ -32,6 +36,12 @@ interface EditorState {
   toggleDir: (path: string) => void;
   selectFile: (path: string) => void;
   toggleDiffMode: () => void;
+
+  // API mode actions
+  fetchFileTree: (projectId: string) => Promise<void>;
+  fetchFileContent: (projectId: string, fileId: string) => Promise<void>;
+  saveFile: (projectId: string, fileId: string) => Promise<void>;
+
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -52,12 +62,26 @@ function findFileByPath(
   return null;
 }
 
-export const useEditorStore = create<EditorState>()((set, get) => ({
+// In mock mode, initialize with mock file tree and contents
+const mockDefaults = {
   files: mockFileTree,
-  openTabs: [],
-  activeTabId: null,
   fileContent: { ...mockFileContents },
   expandedDirs: new Set<string>(['src', 'src/main', 'src/main/java', 'src/main/java/com', 'src/main/java/com/example', 'src/main/java/com/example/ecommerce', 'src/main/resources']),
+};
+
+// In API mode, start empty (data will be fetched)
+const apiDefaults = {
+  files: [],
+  fileContent: {},
+  expandedDirs: new Set<string>(),
+};
+
+const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
+
+export const useEditorStore = create<EditorState>()((set, get) => ({
+  ...defaults,
+  openTabs: [],
+  activeTabId: null,
   isDiffMode: false,
   isLoading: false,
   error: null,
@@ -133,6 +157,80 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
 
   toggleDiffMode: () =>
     set((state) => ({ isDiffMode: !state.isDiffMode })),
+
+  fetchFileTree: async (projectId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: file tree already loaded
+      return;
+    }
+
+    // API mode: fetch file tree from backend
+    set({ isLoading: true, error: null });
+    try {
+      const response = await projectsApi.files(projectId);
+      set({ files: response.data.data, isLoading: false });
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch file tree';
+      set({ error: message, isLoading: false });
+    }
+  },
+
+  fetchFileContent: async (projectId, fileId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: file content already loaded
+      return;
+    }
+
+    // API mode: fetch file content from backend
+    set({ isLoading: true, error: null });
+    try {
+      const response = await projectsApi.fileContent(projectId, fileId);
+      const content = response.data.data.content;
+      set((state) => ({
+        fileContent: { ...state.fileContent, [fileId]: content },
+        isLoading: false,
+      }));
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to fetch file content';
+      set({ error: message, isLoading: false });
+    }
+  },
+
+  saveFile: async (projectId, fileId) => {
+    if (apiMode === 'mock') {
+      // Mock mode: mark tab as not dirty (content is already in state)
+      set((state) => ({
+        openTabs: state.openTabs.map((t) =>
+          t.fileId === fileId ? { ...t, isDirty: false } : t
+        ),
+      }));
+      return;
+    }
+
+    // API mode: save file content to backend
+    const content = get().fileContent[fileId];
+    if (content === undefined) return;
+
+    set({ isLoading: true, error: null });
+    try {
+      await projectsApi.updateFile(projectId, fileId, content);
+      set((state) => ({
+        openTabs: state.openTabs.map((t) =>
+          t.fileId === fileId ? { ...t, isDirty: false } : t
+        ),
+        isLoading: false,
+      }));
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to save file';
+      set({ error: message, isLoading: false });
+    }
+  },
 
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error, isLoading: false }),

@@ -1,5 +1,6 @@
 package com.deepagent.project.controller;
 
+import com.deepagent.auth.entity.User;
 import com.deepagent.common.response.ApiResponse;
 import com.deepagent.common.response.PageResponse;
 import com.deepagent.project.dto.ProjectRequest;
@@ -115,14 +116,17 @@ public class ProjectController {
     /**
      * Extracts the user ID from the authenticated principal.
      *
-     * <p>TODO: Replace with proper User entity principal once custom
-     * UserDetails implementation is in place.</p>
+     * <p>Casts the Spring Security principal to our custom {@link User}
+     * entity which implements {@link UserDetails}, then returns the
+     * database user ID.</p>
      *
      * @param userDetails the authenticated user details
-     * @return the user ID (placeholder implementation)
+     * @return the user ID
      */
     private Long extractUserId(UserDetails userDetails) {
-        // Placeholder: in production, extract from custom UserDetails implementation
-        return 1L;
+        if (userDetails instanceof User user) {
+            return user.getId();
+        }
+        throw new IllegalStateException("Unexpected principal type: " + userDetails.getClass().getName());
     }
 }

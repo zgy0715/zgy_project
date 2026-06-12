@@ -41,7 +41,7 @@ export function useAgent(projectId: string) {
     try {
       setLoading(true);
       const response = await apiClient.get<ApiResponse<Agent[]>>(
-        API_ENDPOINTS.AGENTS.LIST(projectId)
+        API_ENDPOINTS.AGENTS.LIST
       );
       setAgents(response.data.data);
     } catch (err: unknown) {
@@ -50,7 +50,7 @@ export function useAgent(projectId: string) {
         'Failed to fetch agents';
       setError(message);
     }
-  }, [projectId, setAgents, setLoading, setError]);
+  }, [setAgents, setLoading, setError]);
 
   const selectAgent = useCallback(
     (agent: Agent) => {
@@ -65,7 +65,7 @@ export function useAgent(projectId: string) {
       try {
         setLoading(true);
         const response = await apiClient.get<ApiResponse<AgentConversation[]>>(
-          `${API_ENDPOINTS.AGENTS.DETAIL(projectId, agentId)}/conversations`
+          `${API_ENDPOINTS.AGENTS.DETAIL(agentId)}/conversations`
         );
         setConversations(response.data.data);
       } catch (err: unknown) {
@@ -75,7 +75,7 @@ export function useAgent(projectId: string) {
         setError(message);
       }
     },
-    [projectId, setConversations, setLoading, setError]
+    [setConversations, setLoading, setError]
   );
 
   const sendMessage = useCallback(
@@ -87,7 +87,6 @@ export function useAgent(projectId: string) {
         role: 'user',
         content,
         agentId: currentAgent.id,
-        projectId,
         timestamp: new Date().toISOString(),
       };
 
@@ -97,7 +96,7 @@ export function useAgent(projectId: string) {
       try {
         const response = await apiClient.post<
           ApiResponse<{ messageId: string; content: string }>
-        >(API_ENDPOINTS.AGENTS.CHAT(projectId, currentAgent.id), {
+        >(API_ENDPOINTS.AGENTS.CHAT(currentAgent.id), {
           message: content,
           conversationId: currentConversation?.id,
         });
@@ -107,7 +106,6 @@ export function useAgent(projectId: string) {
           role: 'assistant',
           content: response.data.data.content,
           agentId: currentAgent.id,
-          projectId,
           timestamp: new Date().toISOString(),
         };
 
@@ -121,7 +119,7 @@ export function useAgent(projectId: string) {
         setStreaming(false);
       }
     },
-    [currentAgent, currentConversation, projectId, addMessage, setStreaming, setError]
+    [currentAgent, currentConversation, addMessage, setStreaming, setError]
   );
 
   return {

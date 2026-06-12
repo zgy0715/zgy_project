@@ -145,10 +145,30 @@ async def execute_workflow(
 
     try:
         engine = _get_engine()
-        result = await engine.run(
-            task=request.input_task,
-            context=request.context,
-        )
+
+        # Check if the workflow has custom node/edge definitions
+        custom_nodes = workflow_data.get("nodes", [])
+        custom_edges = workflow_data.get("edges", [])
+
+        if custom_nodes:
+            # Use custom DAG execution when workflow defines its own nodes/edges
+            logger.info(
+                "Using custom DAG for workflow %s (%d nodes, %d edges)",
+                workflow_id,
+                len(custom_nodes),
+                len(custom_edges),
+            )
+            result = await engine.run_custom(
+                workflow_def={"nodes": custom_nodes, "edges": custom_edges},
+                task=request.input_task,
+                context=request.context,
+            )
+        else:
+            # Fall back to default graph
+            result = await engine.run(
+                task=request.input_task,
+                context=request.context,
+            )
 
         workflow_data["status"] = WorkflowStatus.COMPLETED
 

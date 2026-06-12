@@ -3,16 +3,20 @@ package com.deepagent.auth.controller;
 import com.deepagent.auth.dto.AuthResponse;
 import com.deepagent.auth.dto.LoginRequest;
 import com.deepagent.auth.dto.RegisterRequest;
+import com.deepagent.auth.jwt.JwtTokenProvider;
 import com.deepagent.auth.service.AuthService;
 import com.deepagent.common.response.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * REST controller for authentication endpoints.
@@ -28,8 +32,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final AuthService authService;
+    private final JwtTokenProvider jwtTokenProvider;
+    private final RedisTemplate<String, Object> redisTemplate;
 
     private static final String REFRESH_TOKEN_HEADER = "X-Refresh-Token";
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_PREFIX = "Bearer ";
+    private static final String TOKEN_BLACKLIST_PREFIX = "jwt:blacklist:";
 
     /**
      * Registers a new user account.
@@ -69,5 +78,45 @@ public class AuthController {
         log.debug("Token refresh request received");
         var authResponse = authService.refreshToken(refreshToken);
         return ApiResponse.success(authResponse);
+    }
+
+    /**
+     * Logs out the current user by blacklisting their JWT token.
+     *
+     * <p>Extracts the access token from the Authorization header and adds
+     * its JTI to the Redis blacklist with a TTL matching the token's
+     * remaining validity period. This ensures the token cannot be reused
+     * even if it has not yet expired.</p>
+     *
+     * @param authHeader the Authorization header containing the Bearer token
+     * @return success response
+     */
+    @PostMapping("/logout")
+    public ApiResponse<Void> logout(
+            @RequestHeader(AUTHORIZATION_HEADER) String authHeader) {
+        var token = extractTokenFromHeader(authHeader);
+        if (token != null && jwtTokenProvider.validateAccessToken(token)) {
+            var tokenId = jwtTokenProvider.getTokenId(token);
+            var expirationSeconds = jwtTokenProvider.getAccessTokenExpirationSeconds();
+            var key = TOKEN_BLACKLIST_PREFIX + tokenId;
+            redisTemplate.opsForValue().set(key, "revoked", expirationSeconds, TimeUnit.SECONDS);
+            log.info("Token blacklisted successfully: jti={}", tokenId);
+        } else {
+            log.warn("Logout attempted with invalid or missing token");
+        }
+        return ApiResponse.success(null, "Logged out successfully");
+    }
+
+    /**
+     * Extracts the JWT token from the Authorization header.
+     *
+     * @param authHeader the Authorization header value
+     * @return the token string, or null if not present or malformed
+     */
+    private String extractTokenFromHeader(String authHeader) {
+        if (authHeader != null && authHeader.startsWith(BEARER_PREFIX)) {
+            return authHeader.substring(BEARER_PREFIX.length());
+        }
+        return null;
     }
 }

@@ -97,7 +97,7 @@ export default function ProjectsPage() {
 
                 {/* Tech stack */}
                 <div className="flex flex-wrap gap-1.5 mb-4">
-                  {project.techStack.map((tech) => (
+                  {(project.techStack ?? []).map((tech) => (
                     <Badge key={tech} variant="outline">
                       {tech}
                     </Badge>
@@ -108,19 +108,19 @@ export default function ProjectsPage() {
                 <div className="grid grid-cols-3 gap-2 text-center border-t border-surface-3 pt-4">
                   <div>
                     <p className="text-lg font-semibold text-white">
-                      {project.stats.totalAgents}
+                      {project.stats?.totalAgents ?? 0}
                     </p>
                     <p className="text-xs text-zinc-500">Agents</p>
                   </div>
                   <div>
                     <p className="text-lg font-semibold text-white">
-                      {project.stats.totalWorkflows}
+                      {project.stats?.totalWorkflows ?? 0}
                     </p>
                     <p className="text-xs text-zinc-500">Workflows</p>
                   </div>
                   <div>
                     <p className="text-lg font-semibold text-white">
-                      {project.stats.codeFiles}
+                      {project.stats?.codeFiles ?? 0}
                     </p>
                     <p className="text-xs text-zinc-500">Files</p>
                   </div>

@@ -4,60 +4,67 @@ export type NodeType = 'agent' | 'trigger' | 'condition' | 'parallel' | 'merge' 
 
 export type EdgeType = 'default' | 'conditional' | 'parallel';
 
-export type WorkflowStatus = 'draft' | 'active' | 'running' | 'paused' | 'completed' | 'failed';
+export type WorkflowStatus = 'created' | 'running' | 'paused' | 'completed' | 'failed';
 
 export interface WorkflowNode {
   id: string;
-  type: NodeType;
-  position: { x: number; y: number };
-  data: WorkflowNodeData;
+  agentType: string;
+  name: string;
+  config?: Record<string, unknown>;
+  // Frontend-only fields for ReactFlow visualization
+  type?: NodeType;
+  position?: { x: number; y: number };
+  data?: WorkflowNodeData;
 }
 
 export interface WorkflowNodeData {
-  label: string;
+  label?: string;
   agentId?: string;
   agentType?: string;
   config?: Record<string, unknown>;
   description?: string;
-  status?: 'idle' | 'thinking' | 'running' | 'success' | 'error';
+  status?: 'pending' | 'planning' | 'executing' | 'reviewing' | 'completed' | 'failed';
 }
 
 export interface WorkflowEdge {
-  id: string;
   source: string;
   target: string;
+  condition?: string;
+  // Frontend-only fields for ReactFlow visualization
+  id?: string;
   type?: EdgeType;
   label?: string;
-  condition?: string;
   animated?: boolean;
 }
 
 export interface Workflow {
   id: string;
-  projectId: string;
   name: string;
   description: string;
   status: WorkflowStatus;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
-  version: number;
+  projectId?: string;
+  version?: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface WorkflowExecution {
-  id: string;
   workflowId: string;
-  status: 'running' | 'completed' | 'failed' | 'cancelled';
-  startedAt: string;
-  completedAt?: string;
-  nodeExecutions: NodeExecution[];
+  status: WorkflowStatus;
+  results: Record<string, unknown>;
   error?: string;
+  // Frontend-only fields for execution tracking
+  id?: string;
+  startedAt?: string;
+  completedAt?: string;
+  nodeExecutions?: NodeExecution[];
 }
 
 export interface NodeExecution {
   nodeId: string;
-  status: 'pending' | 'running' | 'success' | 'error' | 'skipped';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
   startedAt?: string;
   completedAt?: string;
   output?: string;

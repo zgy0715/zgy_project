@@ -82,4 +82,7 @@ def sample_workflow_state() -> dict:
         "messages": [],
         "artifacts": [],
         "errors": [],
+        "thinking_steps": [],
+        "review_findings": [],
+        "test_results": {},
     }

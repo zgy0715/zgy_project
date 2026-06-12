@@ -8,13 +8,13 @@ import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/lib/hooks/use-auth';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const { login, isLoading, error, clearError } = useAuth();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    await login({ email, password });
+    await login({ username, password });
   };
 
   return (
@@ -64,17 +64,17 @@ export default function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <Input
-              id="email"
-              label="Email"
-              type="email"
+              id="username"
+              label="Email / Username"
+              type="text"
               placeholder="you@example.com"
-              value={email}
+              value={username}
               onChange={(e) => {
-                setEmail(e.target.value);
+                setUsername(e.target.value);
                 clearError();
               }}
               required
-              autoComplete="email"
+              autoComplete="username"
             />
 
             <Input

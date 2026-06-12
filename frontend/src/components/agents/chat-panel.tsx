@@ -78,7 +78,7 @@ export function ChatPanel({
 
   // Helper: get thinking chain for a message
   const getThinkingChain = (messageId: string) =>
-    thinkingChains.find((tc) => tc.messageId === messageId);
+    thinkingChains.find((tc) => tc.agentId === (getAgent(messageId)?.id));
 
   return (
     <div className="flex flex-col h-full">
@@ -87,14 +87,14 @@ export function ChatPanel({
         {currentAgent ? (
           <>
             <span className="text-lg">
-              {agentEmojiMap[currentAgent.type] ?? '🤖'}
+              {agentEmojiMap[currentAgent.agentType] ?? '🤖'}
             </span>
             <span className="text-sm font-medium text-white">
               {currentAgent.name}
             </span>
             <AgentStatusBadge status={currentAgent.status} size="sm" />
             <span className="text-xs text-zinc-500 ml-auto">
-              {currentAgent.model}
+              {currentAgent.model ?? ''}
             </span>
           </>
         ) : (
@@ -133,7 +133,7 @@ export function ChatPanel({
             message={message}
             agent={
               message.role === 'assistant'
-                ? getAgent(message.agentId)
+                ? getAgent(message.agentId ?? '')
                 : undefined
             }
             thinkingChain={

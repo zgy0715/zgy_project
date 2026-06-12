@@ -12,7 +12,7 @@ import type {
   ApiResponse,
 } from '@/types';
 
-export function useWorkflow(projectId: string) {
+export function useWorkflow(_projectId?: string) {
   const {
     workflows,
     currentWorkflow,
@@ -40,7 +40,7 @@ export function useWorkflow(projectId: string) {
     try {
       setLoading(true);
       const response = await apiClient.get<ApiResponse<Workflow[]>>(
-        API_ENDPOINTS.WORKFLOWS.LIST(projectId)
+        API_ENDPOINTS.WORKFLOWS.LIST
       );
       setWorkflows(response.data.data);
     } catch (err: unknown) {
@@ -49,14 +49,14 @@ export function useWorkflow(projectId: string) {
         'Failed to fetch workflows';
       setError(message);
     }
-  }, [projectId, setWorkflows, setLoading, setError]);
+  }, [setWorkflows, setLoading, setError]);
 
   const fetchWorkflow = useCallback(
     async (workflowId: string) => {
       try {
         setLoading(true);
         const response = await apiClient.get<ApiResponse<Workflow>>(
-          API_ENDPOINTS.WORKFLOWS.DETAIL(projectId, workflowId)
+          API_ENDPOINTS.WORKFLOWS.DETAIL(workflowId)
         );
         setCurrentWorkflow(response.data.data);
       } catch (err: unknown) {
@@ -66,14 +66,14 @@ export function useWorkflow(projectId: string) {
         setError(message);
       }
     },
-    [projectId, setCurrentWorkflow, setLoading, setError]
+    [setCurrentWorkflow, setLoading, setError]
   );
 
   const saveWorkflow = useCallback(async () => {
     if (!currentWorkflow) return;
     try {
       await apiClient.put(
-        API_ENDPOINTS.WORKFLOWS.DETAIL(projectId, currentWorkflow.id),
+        API_ENDPOINTS.WORKFLOWS.DETAIL(currentWorkflow.id),
         {
           nodes: currentWorkflow.nodes,
           edges: currentWorkflow.edges,
@@ -85,14 +85,14 @@ export function useWorkflow(projectId: string) {
         'Failed to save workflow';
       setError(message);
     }
-  }, [projectId, currentWorkflow, setError]);
+  }, [currentWorkflow, setError]);
 
   const executeWorkflow = useCallback(async () => {
     if (!currentWorkflow) return;
     try {
       setExecuting(true);
       const response = await apiClient.post<ApiResponse<WorkflowExecution>>(
-        API_ENDPOINTS.WORKFLOWS.EXECUTE(projectId, currentWorkflow.id)
+        API_ENDPOINTS.WORKFLOWS.EXECUTE(currentWorkflow.id)
       );
       setExecution(response.data.data);
     } catch (err: unknown) {
@@ -103,7 +103,7 @@ export function useWorkflow(projectId: string) {
     } finally {
       setExecuting(false);
     }
-  }, [projectId, currentWorkflow, setExecution, setExecuting, setError]);
+  }, [currentWorkflow, setExecution, setExecuting, setError]);
 
   return {
     workflows,

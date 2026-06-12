@@ -33,29 +33,31 @@ const agentTypeColors: Record<string, string> = {
 
 // Status to indicator color mapping
 const statusColors: Record<string, string> = {
-  idle: '#71717a',      // zinc-500
-  thinking: '#f59e0b',  // amber-500
-  running: '#3b82f6',   // blue-500
-  success: '#22c55e',   // green-500
-  error: '#ef4444',     // red-500
+  pending: '#71717a',      // zinc-500
+  planning: '#f59e0b',     // amber-500
+  executing: '#3b82f6',    // blue-500
+  reviewing: '#8b5cf6',    // violet-500
+  completed: '#22c55e',    // green-500
+  failed: '#ef4444',       // red-500
 };
 
 // Status label mapping (Chinese)
 const statusLabels: Record<string, string> = {
-  idle: '空闲',
-  thinking: '思考中',
-  running: '运行中',
-  success: '已完成',
-  error: '错误',
+  pending: '等待中',
+  planning: '规划中',
+  executing: '执行中',
+  reviewing: '审查中',
+  completed: '已完成',
+  failed: '错误',
 };
 
 // Custom agent node for the workflow DAG editor
 function AgentNodeComponent({ data, selected }: NodeProps<WorkflowNodeData>) {
   const agentType = data.agentType ?? 'custom';
-  const status = data.status ?? 'idle';
+  const status = data.status ?? 'pending';
   const borderColor = agentTypeColors[agentType] ?? agentTypeColors.custom;
-  const indicatorColor = statusColors[status] ?? statusColors.idle;
-  const isRunning = status === 'running' || status === 'thinking';
+  const indicatorColor = statusColors[status] ?? statusColors.pending;
+  const isRunning = status === 'executing' || status === 'planning';
   const icon = agentTypeIcons[agentType] ?? agentTypeIcons.custom;
 
   return (
@@ -103,16 +105,16 @@ function AgentNodeComponent({ data, selected }: NodeProps<WorkflowNodeData>) {
         <div className="shrink-0">
           <motion.div
             animate={
-              status === 'thinking'
+              status === 'planning'
                 ? { scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }
-                : status === 'running'
+                : status === 'executing'
                 ? { scale: [1, 1.1, 1] }
                 : {}
             }
             transition={
-              status === 'thinking'
+              status === 'planning'
                 ? { duration: 1.5, repeat: Infinity }
-                : status === 'running'
+                : status === 'executing'
                 ? { duration: 1, repeat: Infinity }
                 : {}
             }
@@ -123,7 +125,7 @@ function AgentNodeComponent({ data, selected }: NodeProps<WorkflowNodeData>) {
       </div>
 
       {/* Progress bar (visible during running/thinking) */}
-      {(status === 'running' || status === 'thinking') && (
+      {(status === 'executing' || status === 'planning') && (
         <motion.div
           initial={{ opacity: 0, scaleX: 0 }}
           animate={{ opacity: 1, scaleX: 1 }}
@@ -133,10 +135,10 @@ function AgentNodeComponent({ data, selected }: NodeProps<WorkflowNodeData>) {
             className="h-full rounded-full"
             style={{ backgroundColor: borderColor }}
             animate={{
-              width: status === 'thinking' ? ['0%', '40%'] : ['0%', '100%'],
+              width: status === 'planning' ? ['0%', '40%'] : ['0%', '100%'],
             }}
             transition={
-              status === 'thinking'
+              status === 'planning'
                 ? { duration: 2, repeat: Infinity, ease: 'easeInOut' }
                 : { duration: 3, repeat: Infinity, ease: 'linear' }
             }
@@ -145,7 +147,7 @@ function AgentNodeComponent({ data, selected }: NodeProps<WorkflowNodeData>) {
       )}
 
       {/* Description */}
-      {data.description && status === 'idle' && (
+      {data.description && status === 'pending' && (
         <p className="text-xs text-zinc-500 mt-2 line-clamp-1">
           {data.description}
         </p>

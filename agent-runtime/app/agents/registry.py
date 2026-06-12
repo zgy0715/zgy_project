@@ -76,8 +76,19 @@ class AgentRegistry:
             config=config,
         )
 
+        # If no tools were explicitly provided, ensure default tools are injected.
+        # The base class __init__ already calls _inject_default_tools(), but this
+        # guard handles edge cases where tools=[] was passed explicitly.
+        if tools is None and not agent.tools:
+            agent._inject_default_tools()
+
         self._agents[name] = agent
-        logger.info("Registered agent '%s' of type %s", name, agent_type.value)
+        logger.info(
+            "Registered agent '%s' of type %s with tools: %s",
+            name,
+            agent_type.value,
+            [t.name for t in agent.tools],
+        )
 
         return agent
 

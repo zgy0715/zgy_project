@@ -31,7 +31,7 @@ export function AgentSelector({
       <div className="flex-1 overflow-y-auto py-2 scrollbar-thin">
         {agents.map((agent) => {
           const isSelected = selectedAgentId === agent.id;
-          const emoji = agentEmojiMap[agent.type] ?? '🤖';
+          const emoji = agentEmojiMap[agent.agentType] ?? '🤖';
 
           return (
             <button

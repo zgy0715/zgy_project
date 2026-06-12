@@ -25,14 +25,21 @@ async def coder_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Executing Coder node for task: %s", state.get("task", ""))
 
     agent = CoderAgent(name="workflow-coder")
+
+    # Build context with downstream outputs from previous agents
+    context = dict(state.get("context", {}))
+    if state.get("review_output"):
+        context["review_feedback"] = state["review_output"]
+
     result = await agent.run(
         task=state.get("task", ""),
-        context=state.get("context", {}),
+        context=context,
     )
 
     return {
         "current_agent": "coder",
         "code_output": result,
+        "iteration": state.get("iteration", 0) + 1,
         "artifacts": state.get("artifacts", []) + agent.artifacts,
         "messages": state.get("messages", []) + [
             {"role": "coder", "content": result}
@@ -53,14 +60,20 @@ async def reviewer_node(state: WorkflowState) -> dict[str, Any]:
 
     code_output = state.get("code_output", "")
     agent = ReviewerAgent(name="workflow-reviewer")
+
+    # Pass code_output as context for the reviewer
+    context = dict(state.get("context", {}))
+    context["code"] = code_output
+
     result = await agent.run(
         task=f"Review the following code:\n{code_output}",
-        context=state.get("context", {}),
+        context=context,
     )
 
     return {
         "current_agent": "reviewer",
         "review_output": result,
+        "iteration": state.get("iteration", 0) + 1,
         "artifacts": state.get("artifacts", []) + agent.artifacts,
         "messages": state.get("messages", []) + [
             {"role": "reviewer", "content": result}
@@ -81,14 +94,22 @@ async def tester_node(state: WorkflowState) -> dict[str, Any]:
 
     code_output = state.get("code_output", "")
     agent = TesterAgent(name="workflow-tester")
+
+    # Pass code_output and review_output as context for the tester
+    context = dict(state.get("context", {}))
+    context["code"] = code_output
+    if state.get("review_output"):
+        context["review_feedback"] = state["review_output"]
+
     result = await agent.run(
         task=f"Generate tests for the following code:\n{code_output}",
-        context=state.get("context", {}),
+        context=context,
     )
 
     return {
         "current_agent": "tester",
         "test_output": result,
+        "iteration": state.get("iteration", 0) + 1,
         "artifacts": state.get("artifacts", []) + agent.artifacts,
         "messages": state.get("messages", []) + [
             {"role": "tester", "content": result}
@@ -109,14 +130,22 @@ async def deployer_node(state: WorkflowState) -> dict[str, Any]:
 
     code_output = state.get("code_output", "")
     agent = DeployerAgent(name="workflow-deployer")
+
+    # Pass code_output and test_output as context for the deployer
+    context = dict(state.get("context", {}))
+    context["code"] = code_output
+    if state.get("test_output"):
+        context["test_output"] = state["test_output"]
+
     result = await agent.run(
         task=f"Generate deployment config for the following code:\n{code_output}",
-        context=state.get("context", {}),
+        context=context,
     )
 
     return {
         "current_agent": "deployer",
         "deploy_output": result,
+        "iteration": state.get("iteration", 0) + 1,
         "artifacts": state.get("artifacts", []) + agent.artifacts,
         "messages": state.get("messages", []) + [
             {"role": "deployer", "content": result}
@@ -141,15 +170,22 @@ def create_agent_node(agent: BaseAgent) -> Any:
         """Execute the wrapped agent and return state updates."""
         logger.info("Executing %s node (%s)", agent.name, agent.agent_type.value)
 
+        # Build context with downstream outputs from previous agents
+        context = dict(state.get("context", {}))
+        for key in ("code_output", "review_output", "test_output", "deploy_output"):
+            if state.get(key):
+                context[key] = state[key]
+
         result = await agent.run(
             task=state.get("task", ""),
-            context=state.get("context", {}),
+            context=context,
         )
 
         output_key = f"{agent.agent_type.value}_output"
         return {
             "current_agent": agent.agent_type.value,
             output_key: result,
+            "iteration": state.get("iteration", 0) + 1,
             "artifacts": state.get("artifacts", []) + agent.artifacts,
             "messages": state.get("messages", []) + [
                 {"role": agent.agent_type.value, "content": result}

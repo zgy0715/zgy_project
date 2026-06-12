@@ -13,6 +13,7 @@ interface WorkflowToolbarProps {
   onZoomOut: () => void;
   onFitView: () => void;
   isExecuting: boolean;
+  isPaused?: boolean;
   workflowStatus: string;
 }
 
@@ -25,6 +26,7 @@ export function WorkflowToolbar({
   onZoomOut,
   onFitView,
   isExecuting,
+  isPaused = false,
   workflowStatus,
 }: WorkflowToolbarProps) {
   return (
@@ -42,9 +44,9 @@ export function WorkflowToolbar({
           variant="ghost"
           size="icon"
           onClick={onRun}
-          disabled={isExecuting}
+          disabled={isExecuting && !isPaused}
           className="h-8 w-8 text-green-400 hover:text-green-300 hover:bg-green-500/10"
-          title="运行工作流"
+          title={isPaused ? '继续工作流' : '运行工作流'}
         >
           <Play className="w-4 h-4" />
         </Button>
@@ -53,10 +55,19 @@ export function WorkflowToolbar({
           size="icon"
           onClick={onPause}
           disabled={!isExecuting}
-          className="h-8 w-8 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
-          title="暂停工作流"
+          className={cn(
+            'h-8 w-8 hover:bg-amber-500/10',
+            isPaused
+              ? 'text-green-400 hover:text-green-300'
+              : 'text-amber-400 hover:text-amber-300'
+          )}
+          title={isPaused ? '继续工作流' : '暂停工作流'}
         >
-          <Pause className="w-4 h-4" />
+          {isPaused ? (
+            <Play className="w-4 h-4" />
+          ) : (
+            <Pause className="w-4 h-4" />
+          )}
         </Button>
       </div>
 
@@ -66,7 +77,7 @@ export function WorkflowToolbar({
           variant="ghost"
           size="icon"
           onClick={onReset}
-          disabled={isExecuting}
+          disabled={isExecuting && !isPaused}
           className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-surface-2"
           title="重置工作流"
         >
@@ -115,13 +126,21 @@ export function WorkflowToolbar({
       </div>
 
       {/* Running status indicator */}
-      {isExecuting && (
+      {isExecuting && !isPaused && (
         <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-surface-3">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
           </span>
           <span className="text-xs text-blue-400">运行中</span>
+        </div>
+      )}
+
+      {/* Paused status indicator */}
+      {isExecuting && isPaused && (
+        <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-surface-3">
+          <span className="w-2 h-2 rounded-full bg-amber-500" />
+          <span className="text-xs text-amber-400">已暂停</span>
         </div>
       )}
 
