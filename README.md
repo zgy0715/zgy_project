@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/DeepAgent-v0.1.0-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
+<img src="https://img.shields.io/badge/DeepAgent-v0.1.1-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
 
 # 🤖 DeepAgent
 
@@ -375,7 +375,7 @@ agent-runtime/
 </details>
 
 <details>
-<summary>🟠 API 网关 — <code>api-gateway/</code> (53 文件) — 90% 完成</summary>
+<summary>🟠 API 网关 — <code>api-gateway/</code> (53 文件) — 96% 完成</summary>
 
 ```
 api-gateway/
@@ -412,7 +412,7 @@ api-gateway/
 </details>
 
 <details>
-<summary>⚛️ 前端 — <code>frontend/</code> (63 文件) — 95% 完成</summary>
+<summary>⚛️ 前端 — <code>frontend/</code> (63 文件) — 97% 完成</summary>
 
 ```
 frontend/
@@ -450,8 +450,9 @@ frontend/
 - [x] Coder & Reviewer Agent 业务逻辑深化 (工具注入/结构化审查/LLM路由/自定义DAG)
 - [x] API 网关 (Spring Boot 业务实现 — Agent/Workflow代理/REST客户端/登出/WebSocket认证)
 - [x] 前端 API 对接 & WebSocket 实时通信 (STOMP/双模式Store/SSE流式/xterm.js终端)
-- [ ] 端到端集成联调
-- [ ] 性能优化与基准测试
+- [x] 端到端集成联调 (E2E测试/API契约测试/集成测试/跨模块验证)
+- [x] 性能优化与基准测试 (缓存中间件/并行嵌入/LLM连接池/基准测试体系)
+- [x] 全面系统检查与修复 (安全漏洞/功能缺陷/代码错误/UI优化)
 - [ ] 演示视频与文档
 
 ---
