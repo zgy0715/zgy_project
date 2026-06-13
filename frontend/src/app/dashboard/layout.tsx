@@ -1,11 +1,13 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { useAuth } from '@/lib/hooks/use-auth';
 import { useWebSocket } from '@/lib/hooks/use-websocket';
 import { ToastProvider } from '@/components/ui/toast';
+import { Spinner } from '@/components/ui/spinner';
 
 // Extract projectId from pathname like /dashboard/projects/{id}/...
 function extractProjectId(pathname: string): string | undefined {
@@ -27,12 +29,42 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { isAuthenticated } = useAuth();
+  const [hydrated, setHydrated] = useState(false);
 
   // Extract projectId from URL path like /dashboard/projects/{projectId}/...
   const projectId = extractProjectId(pathname);
 
   // Connect to WebSocket for real-time updates
   useWebSocket(projectId);
+
+  // Wait for Zustand persist hydration to complete
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  // Client-side auth guard: redirect to login if not authenticated
+  // Only run after hydration to avoid flash redirect
+  useEffect(() => {
+    if (hydrated && !isAuthenticated) {
+      router.replace('/auth/login');
+    }
+  }, [hydrated, isAuthenticated, router]);
+
+  // Show loading while hydrating
+  if (!hydrated) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-surface-0">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  // Don't render dashboard if not authenticated
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
     <ToastProvider>

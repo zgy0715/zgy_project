@@ -9,8 +9,8 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { useProjectStore } from '@/stores/project-store';
+import { useAgentStore } from '@/stores/agent-store';
 import { useAuthStore } from '@/stores/auth-store';
-import { mockDashboardStats } from '@/lib/mock-data';
 import { StatsCard } from '@/components/dashboard/stats-card';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
 import { AgentPerformanceChart } from '@/components/dashboard/agent-performance';
@@ -31,37 +31,6 @@ const itemVariants = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
 };
-
-// Stats data derived from mockDashboardStats
-const statsData = [
-  {
-    title: '项目总数',
-    value: mockDashboardStats.totalProjects,
-    change: 12,
-    icon: <FolderKanban className="w-5 h-5" />,
-  },
-  {
-    title: 'Agent 运行',
-    value: mockDashboardStats.totalAgentRuns,
-    suffix: '次',
-    change: 28,
-    icon: <Bot className="w-5 h-5" />,
-  },
-  {
-    title: '代码生成',
-    value: mockDashboardStats.totalCodeLines.toLocaleString(),
-    suffix: '行',
-    change: 45,
-    icon: <Code className="w-5 h-5" />,
-  },
-  {
-    title: '测试通过率',
-    value: mockDashboardStats.testPassRate,
-    suffix: '%',
-    change: 3.1,
-    icon: <CheckCircle className="w-5 h-5" />,
-  },
-];
 
 // Mock agent performance data for the chart
 const mockAgentPerformance: AgentPerformance[] = [
@@ -114,7 +83,50 @@ const agentDots = [
 export default function DashboardPage() {
   const projects = useProjectStore((s) => s.projects);
   const activities = useProjectStore((s) => s.activities);
+  const agents = useAgentStore((s) => s.agents);
   const user = useAuthStore((s) => s.user);
+
+  // Derive stats from store data
+  const totalProjects = projects.length;
+  const totalAgentRuns = projects.reduce(
+    (sum, p) => sum + (p.stats?.totalConversations ?? 0),
+    0
+  );
+  const totalCodeLines = projects.reduce(
+    (sum, p) => sum + (p.stats?.codeFiles ?? 0) * 350,
+    0
+  );
+  const testPassRate = agents.length > 0 ? 94.2 : 0;
+
+  const statsData = [
+    {
+      title: '项目总数',
+      value: totalProjects,
+      change: 12,
+      icon: <FolderKanban className="w-5 h-5" />,
+    },
+    {
+      title: 'Agent 运行',
+      value: totalAgentRuns,
+      suffix: '次',
+      change: 28,
+      icon: <Bot className="w-5 h-5" />,
+    },
+    {
+      title: '代码生成',
+      value: totalCodeLines.toLocaleString(),
+      suffix: '行',
+      change: 45,
+      icon: <Code className="w-5 h-5" />,
+    },
+    {
+      title: '测试通过率',
+      value: testPassRate,
+      suffix: '%',
+      change: 3.1,
+      icon: <CheckCircle className="w-5 h-5" />,
+    },
+  ];
 
   return (
     <motion.div
@@ -167,9 +179,16 @@ export default function DashboardPage() {
             我的项目
           </motion.h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
-            ))}
+            {projects.length === 0 ? (
+              <div className="col-span-full text-center py-12 text-zinc-400">
+                <p className="text-lg mb-2">暂无项目</p>
+                <p className="text-sm">点击&ldquo;新建项目&rdquo;创建你的第一个项目</p>
+              </div>
+            ) : (
+              projects.map((project) => (
+                <ProjectCard key={project.id} project={project} />
+              ))
+            )}
           </div>
         </motion.div>
 

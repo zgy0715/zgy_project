@@ -5,6 +5,8 @@
 #include <random>
 #include <utility>
 
+#include "utils/thread_pool.h"
+
 namespace deepagent::vector_engine {
 
 // ── CodeEmbedder::Impl ──────────────────────────────────────────────────────
@@ -15,6 +17,7 @@ public:
         : config_(config)
         , tokenizer_(config.split_strategy)
         , rng_(std::random_device{}())
+        , pool_(std::thread::hardware_concurrency())
     {}
 
     std::vector<float> embed(std::string_view text) const {
@@ -34,10 +37,33 @@ public:
     std::vector<std::vector<float>> embed_batch(
         const std::vector<std::string>& texts) const
     {
+        const std::size_t n = texts.size();
+        if (n == 0) return {};
+
+        // For small batches, serial execution avoids thread pool overhead
+        if (n < 4) {
+            std::vector<std::vector<float>> results;
+            results.reserve(n);
+            for (const auto& text : texts) {
+                results.push_back(embed(text));
+            }
+            return results;
+        }
+
+        // Parallel execution using the thread pool
+        std::vector<std::future<std::vector<float>>> futures;
+        futures.reserve(n);
+
+        for (std::size_t i = 0; i < n; ++i) {
+            futures.push_back(pool_.submit([this, text = texts[i]]() {
+                return embed(text);
+            }));
+        }
+
         std::vector<std::vector<float>> results;
-        results.reserve(texts.size());
-        for (const auto& text : texts) {
-            results.push_back(embed(text));
+        results.reserve(n);
+        for (auto& f : futures) {
+            results.push_back(f.get());
         }
         return results;
     }
@@ -45,8 +71,34 @@ public:
     std::pair<std::vector<CodeToken>, std::vector<std::vector<float>>>
     embed_code(std::string_view source, std::string_view language) const {
         auto tokens = tokenizer_.tokenize(source, language);
+        const std::size_t n = tokens.size();
+
+        if (n == 0) {
+            return {std::move(tokens), {}};
+        }
+
+        // Parallel embedding for token chunks
+        if (n >= 4) {
+            std::vector<std::future<std::vector<float>>> futures;
+            futures.reserve(n);
+
+            for (std::size_t i = 0; i < n; ++i) {
+                futures.push_back(pool_.submit([this, text = tokens[i].text]() {
+                    return embed(text);
+                }));
+            }
+
+            std::vector<std::vector<float>> embeddings;
+            embeddings.reserve(n);
+            for (auto& f : futures) {
+                embeddings.push_back(f.get());
+            }
+            return {std::move(tokens), std::move(embeddings)};
+        }
+
+        // Serial fallback for small token counts
         std::vector<std::vector<float>> embeddings;
-        embeddings.reserve(tokens.size());
+        embeddings.reserve(n);
         for (const auto& tok : tokens) {
             embeddings.push_back(embed(tok.text));
         }
@@ -83,6 +135,7 @@ private:
     EmbedderConfig config_;
     Tokenizer      tokenizer_;
     std::mt19937   rng_;
+    mutable ThreadPool pool_;   // Thread pool for parallel batch embedding
 };
 
 // ── CodeEmbedder forwarding ─────────────────────────────────────────────────

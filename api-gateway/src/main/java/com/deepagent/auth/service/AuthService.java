@@ -3,6 +3,7 @@ package com.deepagent.auth.service;
 import com.deepagent.auth.dto.AuthResponse;
 import com.deepagent.auth.dto.LoginRequest;
 import com.deepagent.auth.dto.RegisterRequest;
+import com.deepagent.auth.entity.User;
 
 /**
  * Authentication service interface for user authentication operations.

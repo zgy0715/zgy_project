@@ -1,6 +1,7 @@
 """Unit tests for Agent classes."""
 
 import pytest
+from unittest.mock import AsyncMock
 
 from app.agents.base import BaseAgent
 from app.agents.coder import CoderAgent

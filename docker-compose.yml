@@ -84,10 +84,9 @@ services:
       SPRING_DATASOURCE_PASSWORD: deepagent_secret
       SPRING_DATA_REDIS_HOST: redis
       SPRING_RABBITMQ_HOST: rabbitmq
-      AGENT_RUNTIME_HOST: agent-runtime
-      AGENT_RUNTIME_PORT: 50051
-      JWT_SECRET: change-this-in-production
-    ports:
+      AGENT_RUNTIME_URL: http://agent-runtime:8000
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-in-production}
+    ports:ths-i
       - "8080:8080"
     depends_on:
       postgres:
@@ -109,7 +108,7 @@ services:
       RABBITMQ_URL: amqp://deepagent:deepagent_secret@rabbitmq:5672/
       LLM_PROVIDER: openai
       OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder}
-      VECTOR_ENGINE_LIBRARY: /app/vector_engine_bindings.so
+      LLM_VECTOR_ENGINE_LIBRARY: /app/vecto?Piense set OPENAI_API_KEY _nvirinment variabnigs.so
     ports:
       - "8000:8000"
       - "50051:50051"

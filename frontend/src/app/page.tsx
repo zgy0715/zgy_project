@@ -2,8 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Github, ArrowRight, Play, ChevronDown } from 'lucide-react';
+import { useAuth } from '@/lib/hooks/use-auth';
+import { API_MODE } from '@/lib/constants';
 
 // Animation variants
 const containerVariants = {
@@ -119,6 +122,18 @@ const agents = [
 ];
 
 export default function HomePage() {
+  const { login } = useAuth();
+  const router = useRouter();
+  const isMock = API_MODE === 'mock';
+
+  const handleDemoClick = async () => {
+    if (isMock) {
+      await login({ username: 'demo', password: 'demo' });
+    } else {
+      router.push('/dashboard');
+    }
+  };
+
   // Terminal animation state
   const [visibleLines, setVisibleLines] = useState<number>(0);
   const [currentText, setCurrentText] = useState('');
@@ -170,7 +185,7 @@ export default function HomePage() {
           </div>
           <div className="flex items-center gap-4">
             <a
-              href="https://github.com"
+              href="https://github.com/deepagent"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
@@ -179,7 +194,7 @@ export default function HomePage() {
               GitHub
             </a>
             <Link
-              href="/register"
+              href="/auth/register"
               className="bg-brand-500 hover:bg-brand-600 text-white px-5 py-2 rounded-lg text-sm font-medium transition-all hover:shadow-lg hover:shadow-brand-500/25"
             >
               开始体验
@@ -226,19 +241,19 @@ export default function HomePage() {
           {/* CTA Buttons */}
           <motion.div variants={itemVariants} className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
-              href="/register"
+              href="/auth/register"
               className="group bg-brand-500 hover:bg-brand-600 text-white px-8 py-3.5 rounded-lg text-lg font-medium transition-all hover:shadow-xl hover:shadow-brand-500/25 flex items-center gap-2"
             >
               开始体验
               <ArrowRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
             </Link>
-            <Link
-              href="/dashboard"
+            <button
+              onClick={handleDemoClick}
               className="border border-surface-3 hover:border-brand-500/50 text-zinc-300 hover:text-white px-8 py-3.5 rounded-lg text-lg font-medium transition-all flex items-center gap-2"
             >
               <Play className="w-4 h-4" />
               查看演示
-            </Link>
+            </button>
           </motion.div>
 
           {/* Terminal Window */}
@@ -456,7 +471,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t border-surface-3 py-8">
         <div className="max-w-7xl mx-auto px-6 text-center text-sm text-zinc-500">
-          © 2024 DeepAgent. Built with ❤️
+          © {new Date().getFullYear()} DeepAgent. Built with ❤️
         </div>
       </footer>
     </div>

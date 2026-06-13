@@ -44,6 +44,7 @@ async def coder_node(state: WorkflowState) -> dict[str, Any]:
         "messages": state.get("messages", []) + [
             {"role": "coder", "content": result}
         ],
+        "thinking_steps": state.get("thinking_steps", []) + agent.thinking_steps,
     }
 
 
@@ -78,6 +79,7 @@ async def reviewer_node(state: WorkflowState) -> dict[str, Any]:
         "messages": state.get("messages", []) + [
             {"role": "reviewer", "content": result}
         ],
+        "thinking_steps": state.get("thinking_steps", []) + agent.thinking_steps,
     }
 
 
@@ -114,6 +116,7 @@ async def tester_node(state: WorkflowState) -> dict[str, Any]:
         "messages": state.get("messages", []) + [
             {"role": "tester", "content": result}
         ],
+        "thinking_steps": state.get("thinking_steps", []) + agent.thinking_steps,
     }
 
 
@@ -150,6 +153,7 @@ async def deployer_node(state: WorkflowState) -> dict[str, Any]:
         "messages": state.get("messages", []) + [
             {"role": "deployer", "content": result}
         ],
+        "thinking_steps": state.get("thinking_steps", []) + agent.thinking_steps,
     }
 
 
@@ -190,6 +194,7 @@ def create_agent_node(agent: BaseAgent) -> Any:
             "messages": state.get("messages", []) + [
                 {"role": agent.agent_type.value, "content": result}
             ],
+            "thinking_steps": state.get("thinking_steps", []) + agent.thinking_steps,
         }
 
     return node_fn

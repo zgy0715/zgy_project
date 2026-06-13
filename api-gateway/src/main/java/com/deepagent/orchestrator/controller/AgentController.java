@@ -7,6 +7,7 @@ import com.deepagent.orchestrator.service.AgentOrchestrator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 
 import java.util.Map;
 
@@ -134,6 +136,68 @@ public class AgentController {
             @RequestBody Map<String, Object> request) {
         log.info("Chat with agent: agentId={}", agentId);
         var result = agentRestClient.chatWithAgent(agentId, request).block();
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    /**
+     * Streams chat responses from an agent using server-sent events.
+     *
+     * @param agentId the agent identifier
+     * @param request the chat request containing the message
+     * @return a flux of server-sent events with chat response chunks
+     */
+    @PostMapping("/{agentId}/chat/stream")
+    public Flux<ServerSentEvent<Map>> streamChat(
+            @PathVariable String agentId,
+            @RequestBody Map<String, Object> request) {
+        log.info("Streaming chat with agent: agentId={}", agentId);
+        return agentRestClient.streamChat(agentId, request)
+                .map(data -> ServerSentEvent.<Map>builder().data(data).build());
+    }
+
+    /**
+     * Gets the thinking chain for an agent.
+     *
+     * @param agentId the agent identifier
+     * @return the thinking chain details
+     */
+    @GetMapping("/{agentId}/thinking-chain")
+    public ResponseEntity<ApiResponse<Map>> getThinkingChain(
+            @PathVariable String agentId) {
+        log.debug("Getting thinking chain: agentId={}", agentId);
+        var result = agentRestClient.getThinkingChain(agentId).block();
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    /**
+     * Gets the message history for an agent.
+     *
+     * @param agentId the agent identifier
+     * @param limit   optional maximum number of messages to return
+     * @param offset  optional offset for pagination
+     * @return the message history
+     */
+    @GetMapping("/{agentId}/messages")
+    public ResponseEntity<ApiResponse<Map>> getMessages(
+            @PathVariable String agentId,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset) {
+        log.debug("Getting messages: agentId={}, limit={}, offset={}", agentId, limit, offset);
+        var result = agentRestClient.getMessages(agentId, limit, offset).block();
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    /**
+     * Gets the review findings for an agent.
+     *
+     * @param agentId the agent identifier
+     * @return the review findings
+     */
+    @GetMapping("/{agentId}/review-findings")
+    public ResponseEntity<ApiResponse<Map>> getReviewFindings(
+            @PathVariable String agentId) {
+        log.debug("Getting review findings: agentId={}", agentId);
+        var result = agentRestClient.getReviewFindings(agentId).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 

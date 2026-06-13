@@ -4,14 +4,7 @@
 
 import { useCallback } from 'react';
 import { useAgentStore } from '@/stores/agent-store';
-import apiClient from '@/lib/api-client';
-import { API_ENDPOINTS } from '@/lib/constants';
-import type {
-  Agent,
-  ChatMessage,
-  AgentConversation,
-  ApiResponse,
-} from '@/types';
+import type { Agent, ChatMessage, AgentConversation } from '@/types';
 
 export function useAgent(projectId: string) {
   const {
@@ -20,16 +13,18 @@ export function useAgent(projectId: string) {
     conversations,
     currentConversation,
     messages,
+    thinkingChains,
     isStreaming,
     isLoading,
     error,
-    setAgents,
-    setCurrentAgent,
+    fetchAgents,
+    selectAgent,
     setConversations,
     setCurrentConversation,
     setMessages,
     addMessage,
     updateLastMessage,
+    sendMessage,
     setStreaming,
     setLoading,
     setError,
@@ -37,89 +32,30 @@ export function useAgent(projectId: string) {
     reset,
   } = useAgentStore();
 
-  const fetchAgents = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<ApiResponse<Agent[]>>(
-        API_ENDPOINTS.AGENTS.LIST
-      );
-      setAgents(response.data.data);
-    } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to fetch agents';
-      setError(message);
-    }
-  }, [setAgents, setLoading, setError]);
+  const fetchAgentsList = useCallback(async () => {
+    await fetchAgents(projectId);
+  }, [fetchAgents, projectId]);
 
-  const selectAgent = useCallback(
+  const selectAgentById = useCallback(
     (agent: Agent) => {
-      setCurrentAgent(agent);
-      setMessages([]);
+      selectAgent(agent.id);
     },
-    [setCurrentAgent, setMessages]
+    [selectAgent]
   );
 
-  const fetchConversations = useCallback(
-    async (agentId: string) => {
-      try {
-        setLoading(true);
-        const response = await apiClient.get<ApiResponse<AgentConversation[]>>(
-          `${API_ENDPOINTS.AGENTS.DETAIL(agentId)}/conversations`
-        );
-        setConversations(response.data.data);
-      } catch (err: unknown) {
-        const message =
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          'Failed to fetch conversations';
-        setError(message);
-      }
+  const fetchConversationsList = useCallback(
+    async (_agentId: string) => {
+      // Conversations are managed by the store in both mock and API modes
+      setConversations(useAgentStore.getState().conversations);
     },
-    [setConversations, setLoading, setError]
+    [setConversations]
   );
 
-  const sendMessage = useCallback(
+  const sendChatMessage = useCallback(
     async (content: string) => {
-      if (!currentAgent) return;
-
-      const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content,
-        agentId: currentAgent.id,
-        timestamp: new Date().toISOString(),
-      };
-
-      addMessage(userMessage);
-      setStreaming(true);
-
-      try {
-        const response = await apiClient.post<
-          ApiResponse<{ messageId: string; content: string }>
-        >(API_ENDPOINTS.AGENTS.CHAT(currentAgent.id), {
-          message: content,
-          conversationId: currentConversation?.id,
-        });
-
-        const assistantMessage: ChatMessage = {
-          id: response.data.data.messageId,
-          role: 'assistant',
-          content: response.data.data.content,
-          agentId: currentAgent.id,
-          timestamp: new Date().toISOString(),
-        };
-
-        addMessage(assistantMessage);
-      } catch (err: unknown) {
-        const message =
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          'Failed to send message';
-        setError(message);
-      } finally {
-        setStreaming(false);
-      }
+      sendMessage(content);
     },
-    [currentAgent, currentConversation, addMessage, setStreaming, setError]
+    [sendMessage]
   );
 
   return {
@@ -128,14 +64,15 @@ export function useAgent(projectId: string) {
     conversations,
     currentConversation,
     messages,
+    thinkingChains,
     isStreaming,
     isLoading,
     error,
-    fetchAgents,
-    selectAgent,
-    fetchConversations,
+    fetchAgents: fetchAgentsList,
+    selectAgent: selectAgentById,
+    fetchConversations: fetchConversationsList,
     setCurrentConversation,
-    sendMessage,
+    sendMessage: sendChatMessage,
     updateLastMessage,
     clearError,
     reset,

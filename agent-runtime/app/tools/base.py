@@ -67,7 +67,11 @@ class BaseTool(ABC):
         Returns:
             ToolResult containing the execution output or error.
         """
-        return await self.run(**kwargs)
+        try:
+            return await self.run(**kwargs)
+        except Exception as e:
+            logger.error("Tool %s execution failed: %s", self.name, str(e))
+            return ToolResult(success=False, error=str(e))
 
     def get_schema(self) -> dict[str, Any]:
         """Return the JSON schema for the tool's input parameters.

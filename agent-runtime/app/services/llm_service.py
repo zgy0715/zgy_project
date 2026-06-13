@@ -71,9 +71,15 @@ class OpenAIProvider(LLMProvider):
             base_url: OpenAI API base URL.
             model: Default model to use.
         """
+        from openai import AsyncOpenAI
+
+        if not api_key or api_key == "sk-your-api-key-here":
+            logger.warning("OpenAI API key is not configured. LLM calls will fail.")
+
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def complete(
         self,
@@ -85,19 +91,12 @@ class OpenAIProvider(LLMProvider):
     ) -> str:
         """Generate a completion using OpenAI API."""
         try:
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(
-                api_key=self.api_key,
-                base_url=self.base_url,
-            )
-
             formatted_messages = [
                 {"role": msg.role.value, "content": msg.content}
                 for msg in messages
             ]
 
-            response = await client.chat.completions.create(
+            response = await self._client.chat.completions.create(
                 model=model or self.model,
                 messages=formatted_messages,
                 temperature=temperature,
@@ -123,19 +122,12 @@ class OpenAIProvider(LLMProvider):
     ) -> AsyncIterator[str]:
         """Stream a completion using OpenAI API."""
         try:
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(
-                api_key=self.api_key,
-                base_url=self.base_url,
-            )
-
             formatted_messages = [
                 {"role": msg.role.value, "content": msg.content}
                 for msg in messages
             ]
 
-            stream = await client.chat.completions.create(
+            stream = await self._client.chat.completions.create(
                 model=model or self.model,
                 messages=formatted_messages,
                 temperature=temperature,
@@ -156,15 +148,19 @@ class OpenAIProvider(LLMProvider):
 class OllamaProvider(LLMProvider):
     """Ollama local LLM provider."""
 
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, timeout: float = 120.0) -> None:
         """Initialize the Ollama provider.
 
         Args:
             base_url: Ollama API base URL.
             model: Default model to use.
+            timeout: Request timeout in seconds.
         """
+        import httpx
+
         self.base_url = base_url
         self.model = model
+        self._client = httpx.AsyncClient(timeout=timeout)
 
     async def complete(
         self,
@@ -176,28 +172,25 @@ class OllamaProvider(LLMProvider):
     ) -> str:
         """Generate a completion using Ollama API."""
         try:
-            import httpx
-
             formatted_messages = [
                 {"role": msg.role.value, "content": msg.content}
                 for msg in messages
             ]
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/chat",
-                    json={
-                        "model": model or self.model,
-                        "messages": formatted_messages,
-                        "stream": False,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
+            response = await self._client.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": model or self.model,
+                    "messages": formatted_messages,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
                     },
-                )
-                response.raise_for_status()
-                data = response.json()
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
 
             result = data.get("message", {}).get("content", "")
             logger.debug("Ollama completion: %d chars", len(result))
@@ -217,35 +210,32 @@ class OllamaProvider(LLMProvider):
     ) -> AsyncIterator[str]:
         """Stream a completion using Ollama API."""
         try:
-            import httpx
-
             formatted_messages = [
                 {"role": msg.role.value, "content": msg.content}
                 for msg in messages
             ]
 
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.base_url}/api/chat",
-                    json={
-                        "model": model or self.model,
-                        "messages": formatted_messages,
-                        "stream": True,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
+            async with self._client.stream(
+                "POST",
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": model or self.model,
+                    "messages": formatted_messages,
+                    "stream": True,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
                     },
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line.strip():
-                            import json
+                },
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line.strip():
+                        import json
 
-                            data = json.loads(line)
-                            content = data.get("message", {}).get("content", "")
-                            if content:
-                                yield content
+                        data = json.loads(line)
+                        content = data.get("message", {}).get("content", "")
+                        if content:
+                            yield content
 
         except Exception as e:
             logger.error("Ollama streaming failed: %s", str(e))
@@ -278,6 +268,7 @@ class LLMService:
             self._provider = OllamaProvider(
                 base_url=llm_config.ollama_base_url,
                 model=llm_config.ollama_model,
+                timeout=float(llm_config.timeout),
             )
         else:
             raise ValueError(f"Unknown LLM provider: {llm_config.provider}")
@@ -308,8 +299,8 @@ class LLMService:
         return await self._provider.complete(
             messages=messages,
             model=model,
-            temperature=temperature or self._config.temperature,
-            max_tokens=max_tokens or self._config.max_tokens,
+            temperature=temperature if temperature is not None else self._config.temperature,
+            max_tokens=max_tokens if max_tokens is not None else self._config.max_tokens,
             **kwargs,
         )
 
@@ -336,8 +327,8 @@ class LLMService:
         async for chunk in self._provider.stream(
             messages=messages,
             model=model,
-            temperature=temperature or self._config.temperature,
-            max_tokens=max_tokens or self._config.max_tokens,
+            temperature=temperature if temperature is not None else self._config.temperature,
+            max_tokens=max_tokens if max_tokens is not None else self._config.max_tokens,
             **kwargs,
         ):
             yield chunk

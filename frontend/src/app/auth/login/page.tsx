@@ -1,20 +1,36 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/lib/hooks/use-auth';
+import { API_MODE } from '@/lib/constants';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const { login, isLoading, error, clearError } = useAuth();
+  const { login, isLoading, error, clearError, isAuthenticated } = useAuth();
+  const router = useRouter();
+
+  const isMock = API_MODE === 'mock';
+
+  // If already authenticated, redirect to dashboard
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/dashboard');
+    }
+  }, [isAuthenticated, router]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     await login({ username, password });
+  };
+
+  const handleDemoLogin = async () => {
+    await login({ username: 'demo', password: 'demo' });
   };
 
   return (
@@ -27,20 +43,20 @@ export default function LoginPage() {
           </div>
           <h1 className="text-4xl font-bold text-white">DeepAgent</h1>
           <p className="text-lg text-zinc-400">
-            Build software with multiple AI agents collaborating in real-time.
+            多AI Agent协作开发平台
           </p>
           <div className="flex justify-center gap-6 text-sm text-zinc-500">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-green-500" />
-              4 Agent Types
+              4种Agent类型
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-500" />
-              Real-time
+              实时协作
             </div>
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-violet-500" />
-              Secure
+              安全可靠
             </div>
           </div>
         </div>
@@ -109,9 +125,34 @@ export default function LoginPage() {
             </Button>
           </form>
 
+          {isMock && (
+            <div className="mt-4">
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-surface-3" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-surface-0 px-3 text-zinc-500">Demo Mode</span>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full mt-4"
+                onClick={handleDemoLogin}
+                disabled={isLoading}
+              >
+                Enter Demo Dashboard
+              </Button>
+              <p className="text-center text-xs text-zinc-500 mt-2">
+                No credentials needed — click to explore with mock data
+              </p>
+            </div>
+          )}
+
           <p className="text-center text-sm text-zinc-400">
             Don&apos;t have an account?{' '}
-            <Link href="/register" className="text-brand-400 hover:text-brand-300">
+            <Link href="/auth/register" className="text-brand-400 hover:text-brand-300">
               Sign up
             </Link>
           </p>

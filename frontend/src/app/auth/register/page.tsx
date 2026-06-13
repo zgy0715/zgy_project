@@ -44,14 +44,13 @@ export default function RegisterPage() {
           </div>
           <h1 className="text-4xl font-bold text-white">DeepAgent</h1>
           <p className="text-lg text-zinc-400">
-            Start building with AI agents that plan, code, review, and deploy
-            together.
+            多AI Agent协作开发平台，规划、编码、审查、部署一站式完成
           </p>
           <div className="space-y-3 text-left max-w-sm mx-auto">
             {[
-              'Visual workflow editor for agent orchestration',
-              'Real-time code generation and review',
-              'Built-in testing and deployment automation',
+              '可视化工作流编辑器，轻松编排Agent',
+              '实时代码生成与审查',
+              '内置测试与部署自动化',
             ].map((feature) => (
               <div key={feature} className="flex items-center gap-2 text-sm text-zinc-400">
                 <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -148,7 +147,7 @@ export default function RegisterPage() {
 
           <p className="text-center text-sm text-zinc-400">
             Already have an account?{' '}
-            <Link href="/login" className="text-brand-400 hover:text-brand-300">
+            <Link href="/auth/login" className="text-brand-400 hover:text-brand-300">
               Sign in
             </Link>
           </p>

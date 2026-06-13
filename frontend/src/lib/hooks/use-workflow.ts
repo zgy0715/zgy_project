@@ -4,108 +4,10 @@
 
 import { useCallback } from 'react';
 import { useWorkflowStore } from '@/stores/workflow-store';
-import apiClient from '@/lib/api-client';
-import { API_ENDPOINTS } from '@/lib/constants';
-import type {
-  Workflow,
-  WorkflowExecution,
-  ApiResponse,
-} from '@/types';
+import type { Workflow, WorkflowExecution } from '@/types';
 
-export function useWorkflow(_projectId?: string) {
+export function useWorkflow(projectId?: string) {
   const {
-    workflows,
-    currentWorkflow,
-    selectedNodeId,
-    execution,
-    isExecuting,
-    isLoading,
-    error,
-    setWorkflows,
-    setCurrentWorkflow,
-    addNode,
-    updateNode,
-    removeNode,
-    selectNode,
-    addEdge,
-    removeEdge,
-    setExecution,
-    setExecuting,
-    setLoading,
-    setError,
-    clearError,
-  } = useWorkflowStore();
-
-  const fetchWorkflows = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<ApiResponse<Workflow[]>>(
-        API_ENDPOINTS.WORKFLOWS.LIST
-      );
-      setWorkflows(response.data.data);
-    } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to fetch workflows';
-      setError(message);
-    }
-  }, [setWorkflows, setLoading, setError]);
-
-  const fetchWorkflow = useCallback(
-    async (workflowId: string) => {
-      try {
-        setLoading(true);
-        const response = await apiClient.get<ApiResponse<Workflow>>(
-          API_ENDPOINTS.WORKFLOWS.DETAIL(workflowId)
-        );
-        setCurrentWorkflow(response.data.data);
-      } catch (err: unknown) {
-        const message =
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          'Failed to fetch workflow';
-        setError(message);
-      }
-    },
-    [setCurrentWorkflow, setLoading, setError]
-  );
-
-  const saveWorkflow = useCallback(async () => {
-    if (!currentWorkflow) return;
-    try {
-      await apiClient.put(
-        API_ENDPOINTS.WORKFLOWS.DETAIL(currentWorkflow.id),
-        {
-          nodes: currentWorkflow.nodes,
-          edges: currentWorkflow.edges,
-        }
-      );
-    } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to save workflow';
-      setError(message);
-    }
-  }, [currentWorkflow, setError]);
-
-  const executeWorkflow = useCallback(async () => {
-    if (!currentWorkflow) return;
-    try {
-      setExecuting(true);
-      const response = await apiClient.post<ApiResponse<WorkflowExecution>>(
-        API_ENDPOINTS.WORKFLOWS.EXECUTE(currentWorkflow.id)
-      );
-      setExecution(response.data.data);
-    } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to execute workflow';
-      setError(message);
-    } finally {
-      setExecuting(false);
-    }
-  }, [currentWorkflow, setExecution, setExecuting, setError]);
-
-  return {
     workflows,
     currentWorkflow,
     selectedNodeId,
@@ -124,6 +26,61 @@ export function useWorkflow(_projectId?: string) {
     selectNode,
     addEdge,
     removeEdge,
+    setExecution,
+    setExecuting,
+    setLoading,
+    setError,
+    clearError,
+  } = useWorkflowStore();
+
+  const fetchWorkflowsList = useCallback(async () => {
+    if (projectId) {
+      await fetchWorkflows(projectId);
+    }
+  }, [fetchWorkflows, projectId]);
+
+  const fetchWorkflowDetail = useCallback(
+    async (workflowId: string) => {
+      if (projectId) {
+        await fetchWorkflow(projectId, workflowId);
+      }
+    },
+    [fetchWorkflow, projectId]
+  );
+
+  const saveCurrentWorkflow = useCallback(async () => {
+    if (projectId) {
+      await saveWorkflow(projectId);
+    }
+  }, [saveWorkflow, projectId]);
+
+  const executeCurrentWorkflow = useCallback(async () => {
+    if (projectId) {
+      await executeWorkflow(projectId);
+    }
+  }, [executeWorkflow, projectId]);
+
+  return {
+    workflows,
+    currentWorkflow,
+    selectedNodeId,
+    execution,
+    isExecuting,
+    isLoading,
+    error,
+    fetchWorkflows: fetchWorkflowsList,
+    fetchWorkflow: fetchWorkflowDetail,
+    saveWorkflow: saveCurrentWorkflow,
+    executeWorkflow: executeCurrentWorkflow,
+    setCurrentWorkflow,
+    addNode,
+    updateNode,
+    removeNode,
+    selectNode,
+    addEdge,
+    removeEdge,
+    setExecution,
+    setExecuting,
     clearError,
   };
 }

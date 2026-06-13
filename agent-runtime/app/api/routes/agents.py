@@ -104,7 +104,7 @@ async def create_agent(request: AgentCreateRequest) -> AgentResponse:
     state = agent.get_state()
 
     return AgentResponse(
-        id=request.name,
+        id=str(uuid.uuid4()),
         agent_type=request.agent_type,
         name=agent.name,
         description=agent.description,
@@ -385,6 +385,9 @@ async def chat_with_agent_stream(agent_id: str, request: AgentChatRequest):
             # Emit thinking event for plan phase
             yield f"data: {json.dumps({'type': 'thinking', 'data': {'step': 'plan', 'thought': 'Starting task processing'}})}\n\n"
 
+            # Emit message_start event for frontend compatibility
+            yield f"data: {json.dumps({'type': 'message_start', 'data': {'messageId': f'msg-{agent_id}-{int(datetime.utcnow().timestamp())}'}})}\n\n"
+
             # Build messages for LLM streaming
             system_prompt = agent.prompt_templates.get_system_prompt(agent.agent_type.value)
             llm_messages = [
@@ -400,6 +403,8 @@ async def chat_with_agent_stream(agent_id: str, request: AgentChatRequest):
             ):
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'chunk', 'data': {'content': chunk}})}\n\n"
+                # Emit content_delta event for frontend compatibility
+                yield f"data: {json.dumps({'type': 'content_delta', 'data': {'content': chunk}})}\n\n"
 
             # Store assistant response in agent messages
             agent.messages.append(
@@ -421,10 +426,17 @@ async def chat_with_agent_stream(agent_id: str, request: AgentChatRequest):
             # Emit complete event
             yield f"data: {json.dumps({'type': 'complete', 'data': {'content': full_response, 'agent_id': agent_id, 'status': agent.status.value}})}\n\n"
 
+            # Emit message_end event for frontend compatibility
+            yield f"data: {json.dumps({'type': 'message_end', 'data': {'content': full_response, 'agent_id': agent_id, 'status': agent.status.value}})}\n\n"
+
         except Exception as e:
             logger.error("Agent %s stream chat failed: %s", agent_id, str(e))
             agent.status = TaskStatus.FAILED
-            yield f"data: {json.dumps({'type': 'error', 'data': {'error': str(e), 'agent_id': agent_id}})}\n\n"
+            # Filter sensitive information from error message
+            error_msg = str(e)
+            if "api_key" in error_msg.lower() or "sk-" in error_msg:
+                error_msg = "LLM service error occurred"
+            yield f"data: {json.dumps({'type': 'error', 'data': {'error': error_msg, 'agent_id': agent_id}})}\n\n"
 
     return StreamingResponse(
         _stream_generator(),

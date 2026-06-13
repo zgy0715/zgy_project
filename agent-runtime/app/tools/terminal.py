@@ -79,7 +79,6 @@ ALLOWED_COMMANDS: list[str] = [
     "java", "javac", "mvn", "gradle", "go", "cargo", "rustc",
     "make", "cmake", "gcc", "g++", "clang", "clang++",
     "pytest", "unittest", "jest", "vitest",
-    "pip", "pip3",  # needed for test runs, not install (install blocked above)
     # Process info
     "ps", "top", "htop", "which", "whereis", "env", "printenv",
     "echo", "pwd", "whoami", "hostname", "uname", "date",

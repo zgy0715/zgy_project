@@ -109,6 +109,17 @@ public class AuthServiceImpl implements AuthService {
     }
 
     /**
+     * Finds a user by username.
+     *
+     * @param username the username to search for
+     * @return the User entity, or null if not found
+     */
+    @Override
+    public User findByUsername(String username) {
+        return userRepository.findByUsername(username).orElse(null);
+    }
+
+    /**
      * Generates an AuthResponse containing access and refresh tokens.
      *
      * @param user the authenticated user

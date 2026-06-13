@@ -91,11 +91,11 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       return;
     }
 
-    // API mode: fetch projects from backend
+    // API mode: fetch projects from backend (paginated response)
     set({ isLoading: true, error: null });
     try {
       const response = await projectsApi.list();
-      const projects = response.data.data;
+      const projects = response.data.data.items;
       set({
         projects,
         currentProject: projects[0] ?? null,

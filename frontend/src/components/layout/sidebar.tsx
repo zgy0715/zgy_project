@@ -111,15 +111,13 @@ export function Sidebar() {
               </p>
             </div>
           )}
-          {!collapsed && (
-            <button
-              onClick={logout}
-              className="p-1.5 rounded-md text-zinc-400 hover:text-red-400 hover:bg-surface-2 transition-colors"
-              title="退出登录"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          )}
+          <button
+            onClick={logout}
+            className="p-1.5 rounded-md text-zinc-400 hover:text-red-400 hover:bg-surface-2 transition-colors"
+            title="退出登录"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </aside>

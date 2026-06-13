@@ -1,4 +1,9 @@
-"""Workflow API endpoints: create, execute, and query DAG-based workflows."""
+"""Workflow API endpoints: create, execute, and query DAG-based workflows.
+
+TODO: 数据持久化 - 当前所有工作流数据存储在内存中（_workflows 字典），
+服务重启后数据将丢失。未来需要接入数据库（如 PostgreSQL）实现持久化存储，
+包括工作流定义、执行状态和执行结果。
+"""
 
 import logging
 from typing import Any

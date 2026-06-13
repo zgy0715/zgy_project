@@ -3,6 +3,7 @@ package com.deepagent.websocket;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import static com.deepagent.config.RabbitMQConfig.*;
@@ -30,7 +31,7 @@ import static com.deepagent.config.RabbitMQConfig.*;
 public class AgentEventPublisher {
 
     private final RabbitTemplate rabbitTemplate;
-    private final AgentWebSocketHandler webSocketHandler;
+    private final SimpMessagingTemplate messagingTemplate;
 
     /**
      * Publishes a task started event.
@@ -95,8 +96,8 @@ public class AgentEventPublisher {
         var event = new AgentEvent("TASK_FAILED", projectId, taskId, agentType, error);
 
         rabbitTemplate.convertAndSend(AGENT_EXCHANGE, AGENT_RESULT_ROUTING_KEY, event);
-        webSocketHandler.broadcastOutput(projectId, taskId,
-                "Task failed: " + error);
+        messagingTemplate.convertAndSend("/topic/project/" + projectId, event);
+        messagingTemplate.convertAndSend("/topic/project/" + projectId + "/task/" + taskId, event);
 
         log.debug("Published TASK_FAILED event: projectId={}, taskId={}", projectId, taskId);
     }

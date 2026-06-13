@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -93,7 +94,8 @@ public class AuthController {
      */
     @PostMapping("/logout")
     public ApiResponse<Void> logout(
-            @RequestHeader(AUTHORIZATION_HEADER) String authHeader) {
+            @RequestHeader(AUTHORIZATION_HEADER) String authHeader,
+            @RequestHeader(value = REFRESH_TOKEN_HEADER, required = false) String refreshTokenHeader) {
         var token = extractTokenFromHeader(authHeader);
         if (token != null && jwtTokenProvider.validateAccessToken(token)) {
             var tokenId = jwtTokenProvider.getTokenId(token);
@@ -104,7 +106,48 @@ public class AuthController {
         } else {
             log.warn("Logout attempted with invalid or missing token");
         }
+
+        // Also blacklist refresh token if provided
+        if (refreshTokenHeader != null && !refreshTokenHeader.isBlank()) {
+            try {
+                if (jwtTokenProvider.validateRefreshToken(refreshTokenHeader)) {
+                    var refreshJti = jwtTokenProvider.getTokenId(refreshTokenHeader);
+                    var refreshExpirationSeconds = jwtTokenProvider.getRefreshTokenExpirationSeconds();
+                    redisTemplate.opsForValue().set(
+                        TOKEN_BLACKLIST_PREFIX + refreshJti, "revoked",
+                        refreshExpirationSeconds, TimeUnit.SECONDS);
+                    log.info("Refresh token blacklisted: jti={}", refreshJti);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to blacklist refresh token: {}", e.getMessage());
+            }
+        }
+
         return ApiResponse.success(null, "Logged out successfully");
+    }
+
+    /**
+     * Returns the current authenticated user's information.
+     *
+     * @param authHeader the Authorization header containing the Bearer token
+     * @return API response containing user information
+     */
+    @GetMapping("/me")
+    public ApiResponse<AuthResponse> getCurrentUser(
+            @RequestHeader(AUTHORIZATION_HEADER) String authHeader) {
+        var token = extractTokenFromHeader(authHeader);
+        if (token != null && jwtTokenProvider.validateAccessToken(token)) {
+            var username = jwtTokenProvider.getUsernameFromToken(token);
+            var user = authService.findByUsername(username);
+            if (user != null) {
+                var authResponse = new AuthResponse(
+                    null, null, "Bearer", 0,
+                    user.getUsername(), user.getEmail(), user.getRole()
+                );
+                return ApiResponse.success(authResponse);
+            }
+        }
+        return ApiResponse.error("Unauthorized", "Invalid or expired token");
     }
 
     /**

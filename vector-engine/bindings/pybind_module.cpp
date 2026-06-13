@@ -125,6 +125,26 @@ PYBIND11_MODULE(vector_engine, m) {
         .def("dim",    &CodeEmbedder::dim)
         .def("config", &CodeEmbedder::config, py::return_value_policy::reference);
 
+    // ── VectorRecord ─────────────────────────────────────────────────────
+    py::class_<VectorRecord>(m, "VectorRecord")
+        .def_readonly("id",       &VectorRecord::id)
+        .def_readonly("vector",   &VectorRecord::vector)
+        .def_readonly("metadata", &VectorRecord::metadata)
+        .def("__repr__", [](const VectorRecord& r) {
+            return "VectorRecord(id=" + std::to_string(r.id) +
+                   ", dim=" + std::to_string(r.vector.size()) + ")";
+        });
+
+    // ── SearchHit ────────────────────────────────────────────────────────
+    py::class_<VectorStore::SearchHit>(m, "SearchHit")
+        .def_readonly("id",       &VectorStore::SearchHit::id)
+        .def_readonly("distance", &VectorStore::SearchHit::distance)
+        .def_readonly("metadata", &VectorStore::SearchHit::metadata)
+        .def("__repr__", [](const VectorStore::SearchHit& h) {
+            return "SearchHit(id=" + std::to_string(h.id) +
+                   ", distance=" + std::to_string(h.distance) + ")";
+        });
+
     // ── VectorStore ──────────────────────────────────────────────────────
     py::class_<VectorStore>(m, "VectorStore")
         .def(py::init<const IndexConfig&>(), py::arg("config"))

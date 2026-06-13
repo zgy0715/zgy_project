@@ -57,6 +57,9 @@ public:
     /// @param start_id  Starting id for auto-numbering
     void batch_insert(const float* data, std::size_t num_vectors, int64_t start_id = 0);
 
+    /// Mark an element as deleted (soft delete; space is not reclaimed).
+    void markDelete(int64_t id);
+
     /// Search for k nearest neighbors.
     /// @param query  Float array of size dim
     /// @param k      Number of neighbors to return

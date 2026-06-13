@@ -24,6 +24,11 @@ interface WorkflowState {
   isLoading: boolean;
   error: string | null;
 
+  // Execution control state (moved from module-level variables)
+  executionTimeouts: ReturnType<typeof setTimeout>[];
+  currentExecutionIndex: number;
+  isExecutionPaused: boolean;
+
   // Actions
   setWorkflows: (workflows: Workflow[]) => void;
   addWorkflow: (workflow: Workflow) => void;
@@ -72,15 +77,10 @@ const executionOrder = [
 ];
 
 // Track timeout IDs for pause/resume in mock mode
-let executionTimeouts: ReturnType<typeof setTimeout>[] = [];
-let currentExecutionIndex = 0;
-let isExecutionPaused = false;
+// (moved into store state: executionTimeouts, currentExecutionIndex, isExecutionPaused)
 
-function clearExecutionTimeouts() {
-  executionTimeouts.forEach((t) => clearTimeout(t));
-  executionTimeouts = [];
-  currentExecutionIndex = 0;
-  isExecutionPaused = false;
+function clearExecutionTimeouts(timeouts: ReturnType<typeof setTimeout>[]) {
+  timeouts.forEach((t) => clearTimeout(t));
 }
 
 // In mock mode, initialize with mock workflow data
@@ -105,6 +105,9 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   isPaused: false,
   isLoading: false,
   error: null,
+  executionTimeouts: [],
+  currentExecutionIndex: 0,
+  isExecutionPaused: false,
 
   setWorkflows: (workflows) => set({ workflows, isLoading: false }),
 
@@ -207,16 +210,21 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     }
 
     // Mock mode: simulate execution with timed node status updates
-    clearExecutionTimeouts();
+    clearExecutionTimeouts(get().executionTimeouts);
     const executionId = `exec-${Date.now()}`;
     const nodeExecutions = executionOrder.map((nodeId) => ({
       nodeId,
       status: 'pending' as const,
     }));
 
+    const newTimeouts: ReturnType<typeof setTimeout>[] = [];
+
     set({
       isExecuting: true,
       isPaused: false,
+      isExecutionPaused: false,
+      currentExecutionIndex: 0,
+      executionTimeouts: newTimeouts,
       execution: {
         id: executionId,
         workflowId: currentWorkflow.id,
@@ -235,7 +243,7 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     executionOrder.forEach((nodeId, index) => {
       // Phase 1: Set node to thinking (after delay)
       const t1 = setTimeout(() => {
-        if (isExecutionPaused) return;
+        if (get().isExecutionPaused) return;
         get().updateNode(nodeId, { status: 'planning' });
         get().setExecution({
           ...get().execution!,
@@ -244,18 +252,18 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
           ),
         });
       }, index * 2000);
-      executionTimeouts.push(t1);
+      set({ executionTimeouts: [...get().executionTimeouts, t1] });
 
       // Phase 2: Set node to running
       const t2 = setTimeout(() => {
-        if (isExecutionPaused) return;
+        if (get().isExecutionPaused) return;
         get().updateNode(nodeId, { status: 'executing' });
       }, index * 2000 + 600);
-      executionTimeouts.push(t2);
+      set({ executionTimeouts: [...get().executionTimeouts, t2] });
 
       // Phase 3: Set node to success
       const t3 = setTimeout(() => {
-        if (isExecutionPaused) return;
+        if (get().isExecutionPaused) return;
         get().updateNode(nodeId, { status: 'completed' });
         get().setExecution({
           ...get().execution!,
@@ -283,36 +291,39 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
           }
         }
       }, index * 2000 + 1500);
-      executionTimeouts.push(t3);
+      set({ executionTimeouts: [...get().executionTimeouts, t3] });
     });
   },
 
   pauseWorkflow: () => {
-    const { isExecuting, isPaused, currentWorkflow } = get();
+    const { isExecuting, isPaused, currentWorkflow, executionTimeouts } = get();
     if (!isExecuting || isPaused) return;
 
     if (apiMode === 'api') {
-      // API mode: call pause endpoint
-      if (currentWorkflow) {
-        workflowsApi.execute(currentWorkflow.id).catch(() => {
-          // Ignore pause API errors
-        });
-      }
+      // API mode: update local state only (backend doesn't support pause/resume)
+      // The workflow continues on the backend, but UI shows paused state
+      set({
+        isPaused: true,
+        currentWorkflow: currentWorkflow
+          ? { ...currentWorkflow, status: 'paused' as const }
+          : null,
+      });
     } else {
       // Mock mode: clear all pending timeouts to pause execution
-      clearExecutionTimeouts();
-      isExecutionPaused = true;
+      clearExecutionTimeouts(executionTimeouts);
+      set({
+        isPaused: true,
+        isExecutionPaused: true,
+        executionTimeouts: [],
+        currentExecutionIndex: 0,
+        currentWorkflow: currentWorkflow
+          ? { ...currentWorkflow, status: 'paused' as const }
+          : null,
+        execution: get().execution
+          ? { ...get().execution!, status: 'running' as const }
+          : null,
+      });
     }
-
-    set({
-      isPaused: true,
-      currentWorkflow: currentWorkflow
-        ? { ...currentWorkflow, status: 'paused' }
-        : null,
-      execution: get().execution
-        ? { ...get().execution!, status: 'running' } // Keep as running since it's paused mid-execution
-        : null,
-    });
   },
 
   resumeWorkflow: () => {
@@ -320,13 +331,17 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     if (!isExecuting || !isPaused) return;
 
     if (apiMode === 'api') {
-      // API mode: call resume endpoint (re-execute from current state)
-      if (currentWorkflow) {
-        get().executeWorkflow(currentWorkflow.projectId ?? '');
-      }
+      // API mode: just update local state back to running
+      // Real-time updates will continue via WebSocket
+      set({
+        isPaused: false,
+        currentWorkflow: currentWorkflow
+          ? { ...currentWorkflow, status: 'running' as const }
+          : null,
+      });
     } else {
       // Mock mode: re-schedule remaining nodes from where we left off
-      isExecutionPaused = false;
+      set({ isExecutionPaused: false });
 
       // Find the next node to execute (first non-success node)
       const execution = get().execution;
@@ -339,6 +354,7 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
 
       set({
         isPaused: false,
+        currentExecutionIndex: nextIndex,
         currentWorkflow: { ...currentWorkflow, status: 'running' },
       });
 
@@ -348,7 +364,7 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
         const delay = (i - nextIndex) * 2000;
 
         const t1 = setTimeout(() => {
-          if (isExecutionPaused) return;
+          if (get().isExecutionPaused) return;
           get().updateNode(nodeId, { status: 'planning' });
           get().setExecution({
             ...get().execution!,
@@ -357,16 +373,16 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
             ),
           });
         }, delay);
-        executionTimeouts.push(t1);
+        set({ executionTimeouts: [...get().executionTimeouts, t1] });
 
         const t2 = setTimeout(() => {
-          if (isExecutionPaused) return;
+          if (get().isExecutionPaused) return;
           get().updateNode(nodeId, { status: 'executing' });
         }, delay + 600);
-        executionTimeouts.push(t2);
+        set({ executionTimeouts: [...get().executionTimeouts, t2] });
 
         const t3 = setTimeout(() => {
-          if (isExecutionPaused) return;
+          if (get().isExecutionPaused) return;
           get().updateNode(nodeId, { status: 'completed' });
           get().setExecution({
             ...get().execution!,
@@ -393,17 +409,17 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
             }
           }
         }, delay + 1500);
-        executionTimeouts.push(t3);
+        set({ executionTimeouts: [...get().executionTimeouts, t3] });
       }
     }
   },
 
   resetWorkflow: () => {
-    const { currentWorkflow } = get();
+    const { currentWorkflow, executionTimeouts } = get();
     if (!currentWorkflow) return;
 
     // Clear any pending execution timeouts
-    clearExecutionTimeouts();
+    clearExecutionTimeouts(executionTimeouts);
 
     // Reset all node statuses to idle
     const resetNodes = currentWorkflow.nodes.map((n) => ({
@@ -420,6 +436,9 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
       execution: null,
       isExecuting: false,
       isPaused: false,
+      executionTimeouts: [],
+      currentExecutionIndex: 0,
+      isExecutionPaused: false,
     });
   },
 

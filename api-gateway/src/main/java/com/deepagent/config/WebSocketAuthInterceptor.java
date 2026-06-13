@@ -70,12 +70,15 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
                         log.debug("WebSocket STOMP authenticated user: {}", username);
                     } catch (Exception e) {
                         log.warn("WebSocket STOMP authentication failed: {}", e.getMessage());
+                        throw new org.springframework.messaging.MessageDeliveryException("Authentication failed: " + e.getMessage());
                     }
                 } else {
                     log.warn("WebSocket STOMP CONNECT with invalid or missing token");
+                    throw new org.springframework.messaging.MessageDeliveryException("Invalid or missing JWT token");
                 }
             } else {
-                log.debug("WebSocket STOMP CONNECT without Authorization header");
+                log.warn("WebSocket STOMP CONNECT without Authorization header");
+                throw new org.springframework.messaging.MessageDeliveryException("Authorization header required");
             }
         }
 

@@ -11,6 +11,19 @@ from app.api.middleware.request_logger import RequestLoggerMiddleware
 from app.api.routes import agents, health, search, workflows
 from app.config import get_settings
 
+
+def _configure_logging() -> None:
+    """Configure root logger based on application settings."""
+    settings = get_settings()
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+
+# Initialize logging at import time so all modules benefit from it
+_configure_logging()
+
 logger = logging.getLogger(__name__)
 
 # Global resource references for lifecycle management

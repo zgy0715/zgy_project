@@ -27,6 +27,11 @@ import java.util.Map;
  *   <li>GET    /api/v1/agents/             - listAgents</li>
  *   <li>GET    /api/v1/agents/{agentId}    - getAgent</li>
  *   <li>POST   /api/v1/agents/{agentId}/execute - executeAgent</li>
+ *   <li>POST   /api/v1/agents/{agentId}/chat - chatWithAgent</li>
+ *   <li>POST   /api/v1/agents/{agentId}/chat/stream - streamChat</li>
+ *   <li>GET    /api/v1/agents/{agentId}/thinking-chain - getThinkingChain</li>
+ *   <li>GET    /api/v1/agents/{agentId}/messages - getMessages</li>
+ *   <li>GET    /api/v1/agents/{agentId}/review-findings - getReviewFindings</li>
  *   <li>DELETE /api/v1/agents/{agentId}    - deleteAgent</li>
  *   <li>POST   /api/v1/workflows/          - createWorkflow</li>
  *   <li>GET    /api/v1/workflows/          - listWorkflows</li>
@@ -157,7 +162,7 @@ public class AgentRestClient {
     public Mono<Map> chatWithAgent(String agentId, Map<String, Object> request) {
         log.debug("Chatting with agent: agentId={}", agentId);
         return webClient.post()
-                .uri("/api/v1/agents/{agentId}/execute", agentId)
+                .uri("/api/v1/agents/{agentId}/chat", agentId)
                 .bodyValue(request)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, response ->
@@ -183,7 +188,7 @@ public class AgentRestClient {
     public Flux<Map> streamChat(String agentId, Map<String, Object> request) {
         log.debug("Streaming chat with agent: agentId={}", agentId);
         return webClient.post()
-                .uri("/api/v1/agents/{agentId}/execute", agentId)
+                .uri("/api/v1/agents/{agentId}/chat/stream", agentId)
                 .bodyValue(request)
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, response ->
@@ -214,6 +219,69 @@ public class AgentRestClient {
                                 .flatMap(body -> Mono.error(new BusinessException(
                                         "Failed to delete agent: " + body))))
                 .bodyToMono(Void.class)
+                .timeout(Duration.ofSeconds(15));
+    }
+
+    /**
+     * Gets the thinking chain for an agent.
+     */
+    public Mono<Map> getThinkingChain(String agentId) {
+        log.debug("Getting thinking chain: agentId={}", agentId);
+        return webClient.get()
+                .uri("/api/v1/agents/{agentId}/thinking-chain", agentId)
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                        Mono.error(new BusinessException("Agent not found: " + agentId)))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                        response.bodyToMono(String.class)
+                                .flatMap(body -> Mono.error(new BusinessException(
+                                        "Failed to get thinking chain: " + body))))
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(15));
+    }
+
+    /**
+     * Gets the message history for an agent.
+     */
+    public Mono<Map> getMessages(String agentId, Integer limit, Integer offset) {
+        log.debug("Getting messages: agentId={}", agentId);
+        var uriSpec = webClient.get()
+                .uri(uriBuilder -> {
+                    var builder = uriBuilder.path("/api/v1/agents/{agentId}/messages");
+                    if (limit != null) {
+                        builder.queryParam("limit", limit);
+                    }
+                    if (offset != null) {
+                        builder.queryParam("offset", offset);
+                    }
+                    return builder.build(agentId);
+                });
+        return uriSpec.retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                        Mono.error(new BusinessException("Agent not found: " + agentId)))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                        response.bodyToMono(String.class)
+                                .flatMap(body -> Mono.error(new BusinessException(
+                                        "Failed to get messages: " + body))))
+                .bodyToMono(Map.class)
+                .timeout(Duration.ofSeconds(15));
+    }
+
+    /**
+     * Gets the review findings for an agent.
+     */
+    public Mono<Map> getReviewFindings(String agentId) {
+        log.debug("Getting review findings: agentId={}", agentId);
+        return webClient.get()
+                .uri("/api/v1/agents/{agentId}/review-findings", agentId)
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                        Mono.error(new BusinessException("Agent not found: " + agentId)))
+                .onStatus(HttpStatusCode::is5xxServerError, response ->
+                        response.bodyToMono(String.class)
+                                .flatMap(body -> Mono.error(new BusinessException(
+                                        "Failed to get review findings: " + body))))
+                .bodyToMono(Map.class)
                 .timeout(Duration.ofSeconds(15));
     }
 

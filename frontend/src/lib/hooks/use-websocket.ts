@@ -69,36 +69,38 @@ export function useWebSocket(projectId?: string) {
     stompClient.joinProject(projectId, {
       onAgentEvent: (event: AgentEvent) => {
         const status = agentEventTypeToStatus(event.eventType);
+        const { agents } = useAgentStore.getState();
+        const agent = agents.find(a => a.agentType === event.agentType);
+        if (!agent) return;
+        const agentId = agent.id;
 
         switch (event.eventType) {
           case 'TASK_STARTED':
-            updateAgent(event.agentType, { status });
+            updateAgent(agentId, { status });
             break;
 
           case 'AGENT_OUTPUT':
-            // Streaming output - update the last assistant message
-            updateAgent(event.agentType, { status });
+            updateAgent(agentId, { status });
             if (event.output) {
               updateLastMessage(event.output);
             }
             break;
 
           case 'TASK_COMPLETED':
-            updateAgent(event.agentType, { status });
-            // Add final message if output is present
+            updateAgent(agentId, { status });
             if (event.output) {
               addMessage({
                 id: `msg-${Date.now()}`,
                 role: 'assistant',
                 content: event.output,
-                agentId: event.agentType,
+                agentId: agentId,
                 timestamp: event.timestamp,
               });
             }
             break;
 
           case 'TASK_FAILED':
-            updateAgent(event.agentType, { status });
+            updateAgent(agentId, { status });
             break;
         }
       },

@@ -161,6 +161,15 @@ public class JwtTokenProvider {
     }
 
     /**
+     * Gets the refresh token expiration time in seconds.
+     *
+     * @return expiration time in seconds
+     */
+    public long getRefreshTokenExpirationSeconds() {
+        return refreshTokenExpirationMs / 1000;
+    }
+
+    /**
      * Parses and returns the claims from a JWT token.
      *
      * @param token the JWT token

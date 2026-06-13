@@ -45,7 +45,7 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     await storeLogout();
-    router.push('/login');
+    router.push('/auth/login');
   }, [storeLogout, router]);
 
   const fetchCurrentUser = useCallback(async () => {

@@ -58,7 +58,7 @@ apiClient.interceptors.response.use(
         localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
         localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
         if (typeof window !== 'undefined') {
-          window.location.href = '/login';
+          window.location.href = '/auth/login';
         }
       }
     }
@@ -93,7 +93,7 @@ export const authApi = {
 // Projects API
 export const projectsApi = {
   list: () =>
-    apiClient.get<ApiResponse<import('@/types').Project[]>>(API_ENDPOINTS.PROJECTS.LIST),
+    apiClient.get<ApiResponse<{ items: import('@/types').Project[]; total: number; page: number; pageSize: number; totalPages: number }>>(API_ENDPOINTS.PROJECTS.LIST),
 
   detail: (id: string) =>
     apiClient.get<ApiResponse<import('@/types').Project>>(API_ENDPOINTS.PROJECTS.DETAIL(id)),
@@ -198,7 +198,7 @@ export const workflowsApi = {
 // --- SSE streaming support ---
 
 export interface SSEMessageEvent {
-  type: 'message_start' | 'content_delta' | 'message_end' | 'error';
+  type: 'message_start' | 'content_delta' | 'message_end' | 'thinking' | 'chunk' | 'complete' | 'error';
   data: unknown;
 }
 

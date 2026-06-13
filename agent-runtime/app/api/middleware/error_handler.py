@@ -71,6 +71,8 @@ def register_error_handlers(app: FastAPI) -> None:
         status_code = status.HTTP_400_BAD_REQUEST
         if isinstance(exc, (AgentNotFoundError, WorkflowNotFoundError)):
             status_code = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, LLMServiceError):
+            status_code = status.HTTP_502_BAD_GATEWAY
 
         logger.warning("AgentRuntimeError: %s (%s)", exc.message, exc.code)
 

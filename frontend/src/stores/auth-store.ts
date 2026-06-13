@@ -15,6 +15,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  hasRehydrated: boolean;
 
   // Actions
   setUser: (user: User) => void;
@@ -29,11 +30,19 @@ interface AuthState {
   clearError: () => void;
 }
 
+// Helper: set/clear auth cookie for Next.js middleware
+function setAuthCookie(authenticated: boolean) {
+  if (typeof document !== 'undefined') {
+    document.cookie = `deepagent_authenticated=${authenticated ? 'true' : ''}; path=/; max-age=${authenticated ? 86400 : 0}; SameSite=Lax`;
+  }
+}
+
 // In mock mode, default to logged-in state with mock user
 const mockDefaults = {
   user: mockUser,
   token: 'mock-jwt-token-demo',
   isAuthenticated: true,
+  hasRehydrated: false,
 };
 
 // In API mode, start unauthenticated
@@ -41,6 +50,7 @@ const apiDefaults = {
   user: null,
   token: null,
   isAuthenticated: false,
+  hasRehydrated: false,
 };
 
 const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
@@ -48,6 +58,13 @@ const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
 // Check if a token is a mock token (should not be used in API mode)
 function isMockToken(token: string | null): boolean {
   return token === 'mock-jwt-token-demo';
+}
+
+// Normalize role from backend (uppercase) to frontend (lowercase)
+function normalizeRole(role: string): 'user' | 'admin' {
+  const lower = role.toLowerCase();
+  if (lower === 'admin') return 'admin';
+  return 'user';
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -81,6 +98,7 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: null,
           });
+          setAuthCookie(true);
           return;
         }
 
@@ -94,12 +112,13 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
           }
           set({
-            user: { id: '', username, email, role: role as 'user' | 'admin', createdAt: new Date().toISOString() },
+            user: { id: '', username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
             token: accessToken,
             isAuthenticated: true,
             isLoading: false,
             error: null,
           });
+          setAuthCookie(true);
         } catch (error) {
           const message =
             (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -121,6 +140,7 @@ export const useAuthStore = create<AuthState>()(
           isLoading: false,
           error: null,
         });
+        setAuthCookie(true);
       },
 
       register: async (data: RegisterRequest) => {
@@ -144,6 +164,7 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: null,
           });
+          setAuthCookie(true);
           return;
         }
 
@@ -157,12 +178,13 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
           }
           set({
-            user: { id: '', username, email, role: role as 'user' | 'admin', createdAt: new Date().toISOString() },
+            user: { id: '', username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
             token: accessToken,
             isAuthenticated: true,
             isLoading: false,
             error: null,
           });
+          setAuthCookie(true);
         } catch (error) {
           const message =
             (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -185,6 +207,7 @@ export const useAuthStore = create<AuthState>()(
           localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
           localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
         }
+        setAuthCookie(false);
         set({
           user: null,
           token: null,
@@ -240,10 +263,24 @@ export const useAuthStore = create<AuthState>()(
             state.user = null;
             state.token = null;
             state.isAuthenticated = false;
+            setAuthCookie(false);
             if (typeof window !== 'undefined') {
               localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
               localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
             }
+          } else if (apiMode === 'mock' && state && !state.isAuthenticated) {
+            // In mock mode, always auto-authenticate if not already
+            state.user = mockUser;
+            state.token = 'mock-jwt-token-demo';
+            state.isAuthenticated = true;
+            setAuthCookie(true);
+          } else if (state && state.isAuthenticated) {
+            // Sync cookie on rehydration
+            setAuthCookie(true);
+          }
+          // Mark rehydration as complete
+          if (state) {
+            state.hasRehydrated = true;
           }
         };
       },

@@ -1,4 +1,11 @@
-"""Event push service using WebSocket for real-time updates."""
+"""Event push service using WebSocket for real-time updates.
+
+TODO: STOMP兼容性 - 当前 EventService 使用原生 WebSocket 协议推送事件，
+与前端 STOMP 协议不兼容。前端通过 API Gateway 的 STOMP 代理接收事件，
+不直接连接 Agent Runtime 的 WebSocket。未来需要移除此原生 WebSocket 实现，
+或改造为通过 RabbitMQ/消息队列将事件发送到 API Gateway，由 Gateway 统一
+通过 STOMP 协议推送给前端。
+"""
 
 import asyncio
 import json

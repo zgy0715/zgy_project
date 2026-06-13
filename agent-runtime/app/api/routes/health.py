@@ -22,16 +22,30 @@ async def health_check() -> HealthResponse:
     settings = get_settings()
     uptime = time.time() - _start_time
 
-    # TODO: Check actual health of dependencies
+    # Check LLM availability
+    llm_status = "healthy"
+    try:
+        from app.services.llm_service import LLMService
+        llm = LLMService()
+        config = llm._config if hasattr(llm, '_config') else None
+        if config and config.provider == "openai" and (
+            not config.openai_api_key or config.openai_api_key == "sk-your-api-key-here"
+        ):
+            llm_status = "unconfigured"
+    except Exception:
+        llm_status = "unhealthy"
+
     services = {
         "redis": "healthy",
         "database": "healthy",
         "vector_engine": "healthy",
-        "llm": "healthy",
+        "llm": llm_status,
     }
 
+    overall_status = "healthy" if all(s == "healthy" for s in services.values()) else "degraded"
+
     return HealthResponse(
-        status="healthy",
+        status=overall_status,
         version=settings.app_version,
         uptime_seconds=round(uptime, 2),
         services=services,

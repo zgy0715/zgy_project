@@ -116,6 +116,10 @@ public:
         }
     }
 
+    void markDelete(int64_t id) {
+        index_->markDelete(static_cast<hnswlib::labeltype>(id));
+    }
+
     std::vector<SearchResult> search(const float* query, std::size_t k, int ef) const {
         int old_ef = index_->getEf();
         if (ef != old_ef) {
@@ -192,6 +196,10 @@ int64_t HNSWIndex::insert(const float* vector, std::optional<int64_t> id) {
 
 void HNSWIndex::batch_insert(const float* data, std::size_t num_vectors, int64_t start_id) {
     impl_->batch_insert(data, num_vectors, start_id);
+}
+
+void HNSWIndex::markDelete(int64_t id) {
+    impl_->markDelete(id);
 }
 
 std::vector<SearchResult> HNSWIndex::search(const float* query, std::size_t k) const {

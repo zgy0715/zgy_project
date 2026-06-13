@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 namespace deepagent::vector_engine {
 
 namespace fs = std::filesystem;
@@ -57,8 +59,7 @@ public:
         if (!meta_.exists(id)) return false;
         meta_.remove(id);
         vectors_.erase(id);
-        // hnswlib supports markDelete
-        // index_.markDelete(id); // would need access to underlying index
+        index_.markDelete(id);
         return true;
     }
 
@@ -94,11 +95,52 @@ public:
         fs::create_directories(directory);
         index_.save((fs::path(directory) / "index.bin").string());
         meta_.save((fs::path(directory) / "metadata.json").string());
+
+        // Save vectors_ and next_id_ for full state restoration
+        try {
+            nlohmann::json vectors_json = nlohmann::json::object();
+            for (const auto& [id, vec] : vectors_) {
+                nlohmann::json vec_json = nlohmann::json::array();
+                for (float v : vec) {
+                    vec_json.push_back(v);
+                }
+                vectors_json[std::to_string(id)] = vec_json;
+            }
+            vectors_json["__next_id__"] = next_id_;
+
+            std::ofstream ofs((fs::path(directory) / "vectors.json").string());
+            ofs << vectors_json.dump(2);
+        } catch (const std::exception&) {
+            // Log but don't fail the save
+        }
     }
 
     void load(const std::string& directory) {
         index_.load((fs::path(directory) / "index.bin").string());
         meta_.load((fs::path(directory) / "metadata.json").string());
+
+        // Restore vectors_ and next_id_
+        try {
+            std::ifstream ifs((fs::path(directory) / "vectors.json").string());
+            if (ifs.is_open()) {
+                auto vectors_json = nlohmann::json::parse(ifs);
+                vectors_.clear();
+                for (auto it = vectors_json.begin(); it != vectors_json.end(); ++it) {
+                    if (it.key() == "__next_id__") {
+                        next_id_ = it.value().get<int64_t>();
+                        continue;
+                    }
+                    int64_t id = std::stoll(it.key());
+                    std::vector<float> vec;
+                    for (const auto& v : it.value()) {
+                        vec.push_back(v.get<float>());
+                    }
+                    vectors_[id] = std::move(vec);
+                }
+            }
+        } catch (const std::exception&) {
+            // vectors.json may not exist in older saves; that's OK
+        }
     }
 
     std::size_t size() const { return index_.size(); }

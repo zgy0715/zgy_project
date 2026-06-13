@@ -4,7 +4,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from app.models.enums import AgentType, MessageRole, TaskStatus, WorkflowStatus
 
@@ -39,6 +40,8 @@ class AgentCreateRequest(BaseModel):
 class AgentResponse(BaseModel):
     """Response body for agent information."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     id: str
     agent_type: AgentType
     name: str
@@ -50,6 +53,8 @@ class AgentResponse(BaseModel):
 
 class AgentStateResponse(BaseModel):
     """Response body for agent state including conversation history."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     id: str
     agent_type: AgentType
@@ -71,6 +76,8 @@ class AgentExecuteRequest(BaseModel):
 
 class AgentExecuteResponse(BaseModel):
     """Response body for agent task execution."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     agent_id: str
     status: TaskStatus
@@ -112,6 +119,8 @@ class WorkflowCreateRequest(BaseModel):
 class WorkflowResponse(BaseModel):
     """Response body for workflow information."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     id: str
     name: str
     description: str
@@ -131,6 +140,8 @@ class WorkflowExecutionRequest(BaseModel):
 
 class WorkflowExecutionResponse(BaseModel):
     """Response body for workflow execution result."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     workflow_id: str
     status: WorkflowStatus
@@ -161,6 +172,8 @@ class SearchResult(BaseModel):
 class SearchResponse(BaseModel):
     """Response body for semantic search."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     query: str
     results: list[SearchResult]
     total: int
@@ -171,6 +184,8 @@ class SearchResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Response body for health check."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     status: str = "healthy"
     version: str
@@ -195,6 +210,8 @@ class ChatMessage(BaseModel):
 class ThinkingStepResponse(BaseModel):
     """A single thinking step from an agent."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     step: str
     thought: str
     action: str | None = None
@@ -204,6 +221,8 @@ class ThinkingStepResponse(BaseModel):
 
 class ThinkingChainResponse(BaseModel):
     """Thinking chain for an agent execution."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     agent_id: str
     agent_type: str
@@ -221,6 +240,8 @@ class AgentChatRequest(BaseModel):
 class AgentChatResponse(BaseModel):
     """Response from an agent chat."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
     agent_id: str
     message: ChatMessage
     thinking_chain: ThinkingChainResponse | None = None
@@ -229,6 +250,8 @@ class AgentChatResponse(BaseModel):
 
 class ReviewFindingResponse(BaseModel):
     """A structured review finding."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     category: str  # "critical" | "warning" | "suggestion"
     title: str
@@ -239,6 +262,8 @@ class ReviewFindingResponse(BaseModel):
 
 class ReviewResultResponse(BaseModel):
     """Structured review result."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     findings: list[ReviewFindingResponse]
     summary: str

@@ -33,7 +33,7 @@ export interface AuthResponse {
 
 // API response wrapper
 export interface ApiResponse<T> {
-  code: number;
+  code: number | string;
   message: string;
   data: T;
 }
