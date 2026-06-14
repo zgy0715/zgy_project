@@ -57,13 +57,5 @@ CREATE INDEX idx_tasks_project_id ON tasks(project_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 CREATE INDEX idx_tasks_project_status ON tasks(project_id, status);
 
--- Insert default admin user (password: admin123)
--- BCrypt hash generated with strength 12
-INSERT INTO users (username, email, password, role, enabled)
-VALUES (
-    'admin',
-    'admin@deepagent.dev',
-    '$2a$12$LJ3m4ys3Lg2RqwmMpVr5kuYDFnGMHbOlcEHjPMYVHNwiMbQwQJJAi',
-    'ADMIN',
-    TRUE
-);
+-- Default admin user removed for security.
+-- Create admin user via application initialization or CLI command after deployment.

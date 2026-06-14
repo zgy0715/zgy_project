@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Public paths that don't require authentication
-const publicPaths = ['/', '/auth/login', '/auth/register'];
+const publicPaths = ['/', '/auth/login', '/auth/register', '/auth/forgot-password'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -21,8 +21,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // In development/mock mode, allow all routes without auth check
-  // Auth protection is handled client-side by the dashboard layout
+  // 开发模式下跳过服务端认证检查，由客户端 Dashboard Layout 处理
   if (process.env.NODE_ENV === 'development') {
     return NextResponse.next();
   }

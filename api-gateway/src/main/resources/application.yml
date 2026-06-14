@@ -76,9 +76,13 @@ spring:
 
 # JWT Configuration
 jwt:
-  secret: ${JWT_SECRET:change-this-secret-to-a-very-long-random-string-at-least-256-bits-for-hmac-sha256}
+  secret: ${JWT_SECRET:}  # 必须通过环境变量设置，无默认值
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:3600000}
   refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:86400000}
+
+# CORS Configuration
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001}
 
 # gRPC Client Configuration
 grpc:

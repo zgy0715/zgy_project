@@ -1,13 +1,10 @@
-// Auth state management with Zustand - dual mode (mock/api) support
+// Auth state management with Zustand
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User, LoginRequest, RegisterRequest } from '@/types';
-import { STORAGE_KEYS, API_MODE } from '@/lib/constants';
-import { mockUser } from '@/lib/mock-data';
+import { STORAGE_KEYS } from '@/lib/constants';
 import { authApi } from '@/lib/api-client';
-
-const apiMode = API_MODE;
 
 interface AuthState {
   user: User | null;
@@ -21,7 +18,6 @@ interface AuthState {
   setUser: (user: User) => void;
   setToken: (token: string, refreshToken: string) => void;
   login: (data: LoginRequest) => Promise<void>;
-  loginWithCredentials: (user: User, token: string, refreshToken: string) => void;
   register: (data: RegisterRequest) => Promise<void>;
   logout: () => Promise<void>;
   fetchCurrentUser: () => Promise<void>;
@@ -33,31 +29,9 @@ interface AuthState {
 // Helper: set/clear auth cookie for Next.js middleware
 function setAuthCookie(authenticated: boolean) {
   if (typeof document !== 'undefined') {
-    document.cookie = `deepagent_authenticated=${authenticated ? 'true' : ''}; path=/; max-age=${authenticated ? 86400 : 0}; SameSite=Lax`;
+    const secure = location.protocol === 'https:' ? '; secure' : '';
+    document.cookie = `deepagent_authenticated=${authenticated ? 'true' : ''}; path=/; max-age=${authenticated ? 86400 : 0}; SameSite=Lax${secure}`;
   }
-}
-
-// In mock mode, default to logged-in state with mock user
-const mockDefaults = {
-  user: mockUser,
-  token: 'mock-jwt-token-demo',
-  isAuthenticated: true,
-  hasRehydrated: false,
-};
-
-// In API mode, start unauthenticated
-const apiDefaults = {
-  user: null,
-  token: null,
-  isAuthenticated: false,
-  hasRehydrated: false,
-};
-
-const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
-
-// Check if a token is a mock token (should not be used in API mode)
-function isMockToken(token: string | null): boolean {
-  return token === 'mock-jwt-token-demo';
 }
 
 // Normalize role from backend (uppercase) to frontend (lowercase)
@@ -70,7 +44,10 @@ function normalizeRole(role: string): 'user' | 'admin' {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
-      ...defaults,
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      hasRehydrated: false,
       isLoading: false,
       error: null,
 
@@ -85,24 +62,6 @@ export const useAuthStore = create<AuthState>()(
       },
 
       login: async (data: LoginRequest) => {
-        if (apiMode === 'mock') {
-          // Mock mode: simulate login with mock user
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'mock-jwt-token-demo');
-            localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, 'mock-refresh-token');
-          }
-          set({
-            user: mockUser,
-            token: 'mock-jwt-token-demo',
-            isAuthenticated: true,
-            isLoading: false,
-            error: null,
-          });
-          setAuthCookie(true);
-          return;
-        }
-
-        // API mode: call real login endpoint
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.login(data);
@@ -112,7 +71,7 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
           }
           set({
-            user: { id: '', username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
+            user: { id: username, username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
             token: accessToken,
             isAuthenticated: true,
             isLoading: false,
@@ -121,54 +80,13 @@ export const useAuthStore = create<AuthState>()(
           setAuthCookie(true);
         } catch (error) {
           const message =
-            (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-            'Login failed. Please try again.';
+            (error as any)?.response?.data?.message ??
+            '登录失败，请重试。';
           set({ error: message, isLoading: false });
         }
       },
 
-      // Keep the original login method for backward compatibility (mock mode direct set)
-      loginWithCredentials: (user, token, refreshToken) => {
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
-          localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
-        }
-        set({
-          user,
-          token,
-          isAuthenticated: true,
-          isLoading: false,
-          error: null,
-        });
-        setAuthCookie(true);
-      },
-
       register: async (data: RegisterRequest) => {
-        if (apiMode === 'mock') {
-          // Mock mode: simulate registration with mock user
-          const newUser: User = {
-            id: `user-${Date.now()}`,
-            username: data.username,
-            email: data.email,
-            role: 'user',
-            createdAt: new Date().toISOString(),
-          };
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, 'mock-jwt-token-demo');
-            localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, 'mock-refresh-token');
-          }
-          set({
-            user: newUser,
-            token: 'mock-jwt-token-demo',
-            isAuthenticated: true,
-            isLoading: false,
-            error: null,
-          });
-          setAuthCookie(true);
-          return;
-        }
-
-        // API mode: call real register endpoint
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.register(data);
@@ -178,7 +96,7 @@ export const useAuthStore = create<AuthState>()(
             localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
           }
           set({
-            user: { id: '', username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
+            user: { id: username, username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
             token: accessToken,
             isAuthenticated: true,
             isLoading: false,
@@ -187,20 +105,17 @@ export const useAuthStore = create<AuthState>()(
           setAuthCookie(true);
         } catch (error) {
           const message =
-            (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-            'Registration failed. Please try again.';
+            (error as any)?.response?.data?.message ??
+            '注册失败，请重试。';
           set({ error: message, isLoading: false });
         }
       },
 
       logout: async () => {
-        if (apiMode === 'api') {
-          // API mode: call logout endpoint to invalidate server-side session
-          try {
-            await authApi.logout();
-          } catch {
-            // Ignore logout API errors, still clear local state
-          }
+        try {
+          await authApi.logout();
+        } catch {
+          // Ignore logout API errors, still clear local state
         }
 
         if (typeof window !== 'undefined') {
@@ -217,23 +132,27 @@ export const useAuthStore = create<AuthState>()(
       },
 
       fetchCurrentUser: async () => {
-        if (apiMode === 'mock') {
-          // Mock mode: already have mock user in state
-          return;
-        }
-
-        // API mode: fetch current user from /auth/me
         set({ isLoading: true, error: null });
         try {
           const response = await authApi.me();
-          const { user } = response.data.data;
-          set({ user, isAuthenticated: true, isLoading: false });
+          const { username, email, role } = response.data.data;
+          // Sync token from localStorage (may have been refreshed by interceptor)
+          const currentToken = typeof window !== 'undefined'
+            ? localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN)
+            : null;
+          set({
+            user: { id: username, username, email, role: normalizeRole(role), createdAt: new Date().toISOString() },
+            token: currentToken ?? get().token,
+            isAuthenticated: true,
+            isLoading: false,
+          });
         } catch {
           // Token invalid, clear auth state
           if (typeof window !== 'undefined') {
             localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
             localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
           }
+          setAuthCookie(false);
           set({
             user: null,
             token: null,
@@ -254,32 +173,18 @@ export const useAuthStore = create<AuthState>()(
         token: state.token,
         isAuthenticated: state.isAuthenticated,
       }),
-      // When rehydrating from localStorage, validate the persisted state:
-      // In API mode, if the stored token is a mock token, clear auth state
       onRehydrateStorage: () => {
         return (state) => {
-          if (apiMode === 'api' && state && isMockToken(state.token)) {
-            // Clear mock credentials when running in API mode
-            state.user = null;
-            state.token = null;
-            state.isAuthenticated = false;
-            setAuthCookie(false);
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
-              localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-            }
-          } else if (apiMode === 'mock' && state && !state.isAuthenticated) {
-            // In mock mode, always auto-authenticate if not already
-            state.user = mockUser;
-            state.token = 'mock-jwt-token-demo';
-            state.isAuthenticated = true;
-            setAuthCookie(true);
-          } else if (state && state.isAuthenticated) {
-            // Sync cookie on rehydration
-            setAuthCookie(true);
-          }
-          // Mark rehydration as complete
           if (state) {
+            if (state.token && state.isAuthenticated) {
+              setAuthCookie(true);
+            } else {
+              setAuthCookie(false);
+              if (!state.token) {
+                state.user = null;
+                state.isAuthenticated = false;
+              }
+            }
             state.hasRehydrated = true;
           }
         };

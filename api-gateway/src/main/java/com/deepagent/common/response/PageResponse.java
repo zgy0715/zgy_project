@@ -67,6 +67,9 @@ public record PageResponse<T>(
      */
     public static <T> PageResponse<T> of(List<T> content, int pageNumber,
                                           int pageSize, long totalElements) {
+        if (pageSize <= 0) {
+            pageSize = 10;
+        }
         var totalPages = (int) Math.ceil((double) totalElements / pageSize);
         return new PageResponse<>(
                 content,

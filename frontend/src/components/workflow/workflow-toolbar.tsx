@@ -1,6 +1,6 @@
 'use client';
 
-import { Play, Pause, RotateCcw, LayoutGrid, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { Play, Pause, RotateCcw, LayoutGrid, ZoomIn, ZoomOut, Maximize, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +12,7 @@ interface WorkflowToolbarProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onFitView: () => void;
+  onAddNode: () => void;
   isExecuting: boolean;
   isPaused?: boolean;
   workflowStatus: string;
@@ -25,6 +26,7 @@ export function WorkflowToolbar({
   onZoomIn,
   onZoomOut,
   onFitView,
+  onAddNode,
   isExecuting,
   isPaused = false,
   workflowStatus,
@@ -91,6 +93,19 @@ export function WorkflowToolbar({
           title="自动布局"
         >
           <LayoutGrid className="w-4 h-4" />
+        </Button>
+      </div>
+
+      {/* Add node group */}
+      <div className="flex items-center gap-1 px-2 border-r border-surface-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onAddNode}
+          className="h-8 w-8 text-brand-400 hover:text-brand-300 hover:bg-brand-500/10"
+          title="添加节点"
+        >
+          <Plus className="w-4 h-4" />
         </Button>
       </div>
 

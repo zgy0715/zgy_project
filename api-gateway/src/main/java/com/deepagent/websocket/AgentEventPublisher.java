@@ -78,8 +78,8 @@ public class AgentEventPublisher {
         var event = new AgentEvent("TASK_COMPLETED", projectId, taskId, agentType, output);
 
         rabbitTemplate.convertAndSend(AGENT_EXCHANGE, AGENT_RESULT_ROUTING_KEY, event);
-        webSocketHandler.broadcastOutput(projectId, taskId,
-                "Task completed: " + (output != null ? output.substring(0, Math.min(output.length(), 100)) : "no output"));
+        messagingTemplate.convertAndSend("/topic/project/" + projectId, event);
+        messagingTemplate.convertAndSend("/topic/project/" + projectId + "/task/" + taskId, event);
 
         log.debug("Published TASK_COMPLETED event: projectId={}, taskId={}", projectId, taskId);
     }

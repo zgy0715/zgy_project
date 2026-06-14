@@ -45,7 +45,7 @@ export function useAgent(projectId: string) {
 
   const fetchConversationsList = useCallback(
     async (_agentId: string) => {
-      // Conversations are managed by the store in both mock and API modes
+      // Conversations are managed by the agent store
       setConversations(useAgentStore.getState().conversations);
     },
     [setConversations]

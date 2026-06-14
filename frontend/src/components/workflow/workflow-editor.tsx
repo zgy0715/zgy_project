@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -20,8 +20,12 @@ import 'reactflow/dist/style.css';
 import { AgentNode } from './agent-node';
 import { CustomEdge } from './edge-custom';
 import { WorkflowToolbar } from './workflow-toolbar';
+import { NodeContextMenu } from './node-context-menu';
+import { NodeConfigPanel } from './node-config-panel';
+import { NodePalette } from './node-palette';
 import { useWorkflowStore } from '@/stores/workflow-store';
 import type { WorkflowNodeData } from '@/types';
+import { generateId } from '@/lib/utils';
 
 // Register custom node types — must be useMemo-wrapped to prevent infinite re-renders
 const useNodeTypes = () =>
@@ -77,8 +81,24 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
   const resetWorkflow = useWorkflowStore((s) => s.resetWorkflow);
   const selectNode = useWorkflowStore((s) => s.selectNode);
   const updateWorkflow = useWorkflowStore((s) => s.updateWorkflow);
+  const removeNode = useWorkflowStore((s) => s.removeNode);
+  const removeEdge = useWorkflowStore((s) => s.removeEdge);
+  const addNode = useWorkflowStore((s) => s.addNode);
 
   const reactFlowInstance = useReactFlow();
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+  } | null>(null);
+
+  // Config panel state
+  const [configNodeId, setConfigNodeId] = useState<string | null>(null);
+
+  // Node palette state
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Convert store nodes to ReactFlow nodes
   const nodes: Node<WorkflowNodeData>[] = useMemo(
@@ -108,8 +128,6 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
   );
 
   // Handle node position changes and sync back to store
-  // Use reactFlowInstance.getNodes() instead of the memoized `nodes` to avoid
-  // stale closure values when React batches updates.
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
       if (!currentWorkflow) return;
@@ -127,8 +145,6 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
   );
 
   // Handle edge changes and sync back to store
-  // Use reactFlowInstance.getEdges() instead of the memoized `edges` to avoid
-  // stale closure values when React batches updates.
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
       if (!currentWorkflow) return;
@@ -172,6 +188,80 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
     [selectNode]
   );
 
+  // Handle node right-click context menu
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: { id: string }) => {
+      event.preventDefault();
+      setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id });
+    },
+    []
+  );
+
+  // Close context menu on pane click
+  const onPaneClick = useCallback(() => {
+    setContextMenu(null);
+    setConfigNodeId(null);
+  }, []);
+
+  // Handle node deletion (Delete key)
+  const onNodesDelete = useCallback(
+    (deletedNodes: Node[]) => {
+      deletedNodes.forEach((n) => removeNode(n.id));
+    },
+    [removeNode]
+  );
+
+  // Handle edge deletion (Delete key)
+  const onEdgesDelete = useCallback(
+    (deletedEdges: Edge[]) => {
+      deletedEdges.forEach((e) => removeEdge(e.id));
+    },
+    [removeEdge]
+  );
+
+  // Handle double-click to open config panel
+  const onNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: { id: string }) => {
+      setConfigNodeId(node.id);
+    },
+    []
+  );
+
+  // Context menu handlers
+  const handleConfigureNode = useCallback((nodeId: string) => {
+    setConfigNodeId(nodeId);
+  }, []);
+
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      removeNode(nodeId);
+    },
+    [removeNode]
+  );
+
+  const handleDuplicateNode = useCallback(
+    (nodeId: string) => {
+      const node = currentWorkflow?.nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      const newId = `node-${generateId()}`;
+      addNode({
+        ...node,
+        id: newId,
+        name: `${node.name} (副本)`,
+        position: {
+          x: (node.position?.x ?? 0) + 50,
+          y: (node.position?.y ?? 0) + 50,
+        },
+        data: {
+          ...(node.data ?? {}),
+          label: `${node.data?.label ?? node.name} (副本)`,
+          status: 'pending',
+        },
+      });
+    },
+    [currentWorkflow, addNode]
+  );
+
   // Auto-layout: reset node positions to default layout
   const handleAutoLayout = useCallback(() => {
     if (!currentWorkflow) return;
@@ -180,7 +270,6 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
       position: autoLayoutPositions[n.id] ?? n.position ?? { x: 0, y: 0 },
     }));
     updateWorkflow(currentWorkflow.id, { nodes: layoutNodes });
-    // Fit view after layout
     setTimeout(() => reactFlowInstance.fitView({ padding: 0.2 }), 50);
   }, [currentWorkflow, updateWorkflow, reactFlowInstance]);
 
@@ -217,9 +306,16 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onFitView={handleFitView}
+        onAddNode={() => setPaletteOpen((v) => !v)}
         isExecuting={isExecuting}
         isPaused={isPaused}
         workflowStatus={currentWorkflow?.status ?? 'draft'}
+      />
+
+      {/* Node palette */}
+      <NodePalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
       />
 
       {/* ReactFlow canvas */}
@@ -230,6 +326,12 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onNodeDoubleClick={onNodeDoubleClick}
+        onNodesDelete={onNodesDelete}
+        onEdgesDelete={onEdgesDelete}
+        onPaneClick={onPaneClick}
+        deleteKeyCode="Delete"
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
@@ -260,6 +362,25 @@ export function WorkflowEditor({ projectId, workflowId }: WorkflowEditorProps) {
           maskColor="rgba(9,9,11,0.7)"
         />
       </ReactFlow>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <NodeContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          nodeId={contextMenu.nodeId}
+          onConfigure={handleConfigureNode}
+          onDelete={handleDeleteNode}
+          onDuplicate={handleDuplicateNode}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* Config panel */}
+      <NodeConfigPanel
+        nodeId={configNodeId}
+        onClose={() => setConfigNodeId(null)}
+      />
     </div>
   );
 }

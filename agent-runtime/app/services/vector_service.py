@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -15,11 +16,12 @@ _HTTP_TIMEOUT = httpx.Timeout(10.0, connect=2.0)
 
 
 def _make_client(timeout: httpx.Timeout = _HTTP_TIMEOUT) -> httpx.AsyncClient:
-    """Create an httpx AsyncClient with SSL verification disabled (for local dev)."""
+    """Create an httpx AsyncClient with SSL verification from config."""
+    verify_ssl = os.getenv("VECTOR_ENGINE_VERIFY_SSL", "true").lower() != "false"
     try:
-        return httpx.AsyncClient(timeout=timeout, verify=False)
+        return httpx.AsyncClient(timeout=timeout, verify=verify_ssl)
     except Exception as exc:
-        logger.warning("Failed to create httpx client with SSL: %s", exc)
+        logger.warning("Failed to create httpx client with SSL verify=%s: %s", verify_ssl, exc)
         return httpx.AsyncClient(timeout=timeout, verify=False)
 
 

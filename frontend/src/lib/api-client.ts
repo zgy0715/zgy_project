@@ -2,7 +2,7 @@
 
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { API_ENDPOINTS, STORAGE_KEYS } from './constants';
-import type { ApiResponse } from '@/types';
+import type { ApiResponse, PaginatedResponse } from '@/types';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1';
 
@@ -29,6 +29,19 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+// Token refresh mutex - prevent concurrent refresh requests
+let isRefreshing = false;
+let refreshSubscribers: Array<(token: string) => void> = [];
+
+function onTokenRefreshed(newToken: string) {
+  refreshSubscribers.forEach((cb) => cb(newToken));
+  refreshSubscribers = [];
+}
+
+function addRefreshSubscriber(cb: (token: string) => void) {
+  refreshSubscribers.push(cb);
+}
+
 // Response interceptor: handle errors and token refresh
 apiClient.interceptors.response.use(
   (response) => response,
@@ -37,29 +50,58 @@ apiClient.interceptors.response.use(
 
     // Attempt token refresh on 401
     if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-        if (refreshToken) {
-          const { data } = await axios.post<ApiResponse<import('@/types').AuthResponse>>(
-            `${BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`,
-            null,
-            { headers: { 'X-Refresh-Token': refreshToken } }
-          );
-          localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, data.data.accessToken);
-          if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${data.data.accessToken}`;
-          }
-          return apiClient(originalRequest);
-        }
-      } catch {
-        // Refresh failed, redirect to login
+      const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+      if (!refreshToken) {
         localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
         localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
         if (typeof window !== 'undefined') {
           window.location.href = '/auth/login';
         }
+        return Promise.reject(error);
+      }
+
+      if (isRefreshing) {
+        // Queue this request to retry after refresh completes
+        return new Promise((resolve) => {
+          addRefreshSubscriber((newToken: string) => {
+            originalRequest.headers.Authorization = `Bearer ${newToken}`;
+            resolve(apiClient(originalRequest));
+          });
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const { data } = await axios.post<ApiResponse<import('@/types').AuthResponse>>(
+          `${BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`,
+          null,
+          { headers: { 'X-Refresh-Token': refreshToken } }
+        );
+
+        const newToken = data.data.accessToken;
+        const newRefreshToken = data.data.refreshToken;
+
+        localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, newToken);
+        if (newRefreshToken) {
+          localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, newRefreshToken);
+        }
+
+        onTokenRefreshed(newToken);
+        isRefreshing = false;
+
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        isRefreshing = false;
+        refreshSubscribers = [];
+        localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+        localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+        if (typeof window !== 'undefined') {
+          window.location.href = '/auth/login';
+        }
+        return Promise.reject(refreshError);
       }
     }
 
@@ -83,17 +125,28 @@ export const authApi = {
       data
     ),
 
-  logout: () =>
-    apiClient.post<ApiResponse<void>>(API_ENDPOINTS.AUTH.LOGOUT),
+  logout: () => {
+    const refreshToken = typeof window !== 'undefined'
+      ? localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN)
+      : null;
+    return apiClient.post<ApiResponse<void>>(
+      API_ENDPOINTS.AUTH.LOGOUT,
+      null,
+      { headers: refreshToken ? { 'X-Refresh-Token': refreshToken } : {} }
+    );
+  },
 
   me: () =>
-    apiClient.get<ApiResponse<{ user: import('@/types').User }>>(API_ENDPOINTS.AUTH.ME),
+    apiClient.get<ApiResponse<import('@/types').AuthResponse>>(API_ENDPOINTS.AUTH.ME),
 };
 
 // Projects API
 export const projectsApi = {
-  list: () =>
-    apiClient.get<ApiResponse<{ items: import('@/types').Project[]; total: number; page: number; pageSize: number; totalPages: number }>>(API_ENDPOINTS.PROJECTS.LIST),
+  list: (params?: { page?: number; size?: number }) =>
+    apiClient.get<ApiResponse<PaginatedResponse<import('@/types').Project>>>(
+      API_ENDPOINTS.PROJECTS.LIST,
+      { params }
+    ),
 
   detail: (id: string) =>
     apiClient.get<ApiResponse<import('@/types').Project>>(API_ENDPOINTS.PROJECTS.DETAIL(id)),
@@ -122,14 +175,32 @@ export const projectsApi = {
 
 // Agents API
 export const agentsApi = {
-  list: () =>
+  list: (params?: { projectId?: string }) =>
     apiClient.get<ApiResponse<import('@/types').Agent[]>>(
-      API_ENDPOINTS.AGENTS.LIST
+      API_ENDPOINTS.AGENTS.LIST,
+      { params }
     ),
 
   detail: (agentId: string) =>
     apiClient.get<ApiResponse<import('@/types').Agent>>(
       API_ENDPOINTS.AGENTS.DETAIL(agentId)
+    ),
+
+  create: (data: Partial<import('@/types').Agent>) =>
+    apiClient.post<ApiResponse<import('@/types').Agent>>(
+      API_ENDPOINTS.AGENTS.LIST,
+      data
+    ),
+
+  delete: (agentId: string) =>
+    apiClient.delete<ApiResponse<void>>(
+      API_ENDPOINTS.AGENTS.DETAIL(agentId)
+    ),
+
+  execute: (agentId: string, data: { task: string; projectId?: string }) =>
+    apiClient.post<ApiResponse<{ taskId: string }>>(
+      API_ENDPOINTS.AGENTS.DETAIL(agentId),
+      data
     ),
 
   chat: (agentId: string, data: { message: string; conversationId?: string }) =>
@@ -168,9 +239,10 @@ export const agentsApi = {
 
 // Workflows API
 export const workflowsApi = {
-  list: () =>
+  list: (params?: { projectId?: string }) =>
     apiClient.get<ApiResponse<import('@/types').Workflow[]>>(
-      API_ENDPOINTS.WORKFLOWS.LIST
+      API_ENDPOINTS.WORKFLOWS.LIST,
+      { params }
     ),
 
   detail: (id: string) =>
@@ -178,7 +250,18 @@ export const workflowsApi = {
       API_ENDPOINTS.WORKFLOWS.DETAIL(id)
     ),
 
-  save: (id: string, data: { nodes: import('@/types').WorkflowNode[]; edges: import('@/types').WorkflowEdge[] }) =>
+  create: (data: Partial<import('@/types').Workflow>) =>
+    apiClient.post<ApiResponse<import('@/types').Workflow>>(
+      API_ENDPOINTS.WORKFLOWS.LIST,
+      data
+    ),
+
+  delete: (id: string) =>
+    apiClient.delete<ApiResponse<void>>(
+      API_ENDPOINTS.WORKFLOWS.DETAIL(id)
+    ),
+
+  save: (id: string, data: { name?: string; description?: string; nodes: import('@/types').WorkflowNode[]; edges: import('@/types').WorkflowEdge[] }) =>
     apiClient.put<ApiResponse<import('@/types').Workflow>>(
       API_ENDPOINTS.WORKFLOWS.DETAIL(id),
       data
@@ -221,6 +304,9 @@ export async function streamAgentChat(
   const token = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN) : null;
   const url = `${BASE_URL}${API_ENDPOINTS.AGENTS.CHAT_STREAM(agentId)}`;
 
+  const controller = new AbortController();
+  const overallTimeout = setTimeout(() => controller.abort(), 300000); // 5-minute total timeout
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -229,6 +315,7 @@ export async function streamAgentChat(
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(data),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -248,7 +335,9 @@ export async function streamAgentChat(
     let buffer = '';
 
     while (true) {
+      const readTimeout = setTimeout(() => controller.abort(), 60000); // 60-second read timeout
       const { done, value } = await reader.read();
+      clearTimeout(readTimeout);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -294,7 +383,13 @@ export async function streamAgentChat(
     // Stream ended without [DONE]
     callbacks.onEnd?.(fullContent);
   } catch (err) {
-    callbacks.onError?.((err as Error).message ?? 'Stream connection failed');
+    if ((err as Error).name === 'AbortError') {
+      callbacks.onError?.('Stream timed out');
+    } else {
+      callbacks.onError?.((err as Error).message ?? 'Stream connection failed');
+    }
+  } finally {
+    clearTimeout(overallTimeout);
   }
 }
 

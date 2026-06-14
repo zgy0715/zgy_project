@@ -1,12 +1,8 @@
-// Project state management with Zustand - dual mode (mock/api) support
+// Project state management with Zustand
 
 import { create } from 'zustand';
 import type { Project, ProjectActivity, CreateProjectRequest, UpdateProjectRequest } from '@/types';
-import { mockProjects, mockActivities } from '@/lib/mock-data';
-import { API_MODE } from '@/lib/constants';
 import { projectsApi } from '@/lib/api-client';
-
-const apiMode = API_MODE;
 
 interface ProjectState {
   projects: Project[];
@@ -22,7 +18,7 @@ interface ProjectState {
   removeProject: (id: string) => void;
   setCurrentProject: (project: Project | null) => void;
   setCurrentProjectById: (id: string) => void;
-  fetchProjects: () => Promise<void>;
+  fetchProjects: (params?: { page?: number; size?: number }) => Promise<void>;
   createProject: (request: CreateProjectRequest) => Promise<void>;
   saveProject: (id: string, data: UpdateProjectRequest) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -34,24 +30,10 @@ interface ProjectState {
   clearError: () => void;
 }
 
-// In mock mode, initialize with mock project data
-const mockDefaults = {
-  projects: mockProjects,
-  currentProject: mockProjects[0],
-  activities: mockActivities,
-};
-
-// In API mode, start empty (data will be fetched)
-const apiDefaults = {
+export const useProjectStore = create<ProjectState>()((set, get) => ({
   projects: [],
   currentProject: null,
   activities: [],
-};
-
-const defaults = apiMode === 'mock' ? mockDefaults : apiDefaults;
-
-export const useProjectStore = create<ProjectState>()((set, get) => ({
-  ...defaults,
   isLoading: false,
   error: null,
 
@@ -85,68 +67,28 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       currentProject: state.projects.find((p) => p.id === id) ?? null,
     })),
 
-  fetchProjects: async () => {
-    if (apiMode === 'mock') {
-      // Mock mode: data is already loaded
-      return;
-    }
-
-    // API mode: fetch projects from backend (paginated response)
+  fetchProjects: async (params) => {
     set({ isLoading: true, error: null });
     try {
-      const response = await projectsApi.list();
-      const projects = response.data.data.items;
-      set({
+      const response = await projectsApi.list(params);
+      const pageData = response.data.data;
+      const projects = pageData.content;
+      set((state) => ({
         projects,
-        currentProject: projects[0] ?? null,
+        currentProject: state.currentProject
+          ? projects.find((p) => p.id === state.currentProject!.id) ?? state.currentProject
+          : projects[0] ?? null,
         isLoading: false,
-      });
+      }));
     } catch (error) {
       const message =
-        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to fetch projects';
+        (error as any)?.response?.data?.message ??
+        '获取项目列表失败';
       set({ error: message, isLoading: false });
     }
   },
 
   createProject: async (request) => {
-    if (apiMode === 'mock') {
-      // Mock mode: create project locally
-      const newProject: Project = {
-        id: `proj-${Date.now()}`,
-        name: request.name,
-        description: request.description,
-        status: 'draft',
-        ownerId: 'user-1',
-        members: [
-          {
-            userId: 'user-1',
-            username: 'Demo User',
-            role: 'owner',
-            joinedAt: new Date().toISOString(),
-          },
-        ],
-        techStack: request.techStack,
-        repository: request.repository,
-        stats: {
-          totalAgents: 0,
-          totalWorkflows: 0,
-          totalConversations: 0,
-          totalTokens: 0,
-          codeFiles: 0,
-          lastActivityAt: new Date().toISOString(),
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      set((state) => ({
-        projects: [newProject, ...state.projects],
-        currentProject: newProject,
-      }));
-      return;
-    }
-
-    // API mode: create project via API
     set({ isLoading: true, error: null });
     try {
       const response = await projectsApi.create(request);
@@ -158,20 +100,13 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       }));
     } catch (error) {
       const message =
-        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to create project';
+        (error as any)?.response?.data?.message ??
+        '创建项目失败';
       set({ error: message, isLoading: false });
     }
   },
 
   saveProject: async (id, data) => {
-    if (apiMode === 'mock') {
-      // Mock mode: update project locally
-      get().updateProject(id, data);
-      return;
-    }
-
-    // API mode: update project via API
     set({ isLoading: true, error: null });
     try {
       const response = await projectsApi.update(id, data);
@@ -180,20 +115,13 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       set({ isLoading: false });
     } catch (error) {
       const message =
-        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to update project';
+        (error as any)?.response?.data?.message ??
+        '更新项目失败';
       set({ error: message, isLoading: false });
     }
   },
 
   deleteProject: async (id) => {
-    if (apiMode === 'mock') {
-      // Mock mode: remove project locally
-      get().removeProject(id);
-      return;
-    }
-
-    // API mode: delete project via API
     set({ isLoading: true, error: null });
     try {
       await projectsApi.delete(id);
@@ -201,27 +129,22 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       set({ isLoading: false });
     } catch (error) {
       const message =
-        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to delete project';
+        (error as any)?.response?.data?.message ??
+        '删除项目失败';
       set({ error: message, isLoading: false });
     }
   },
 
   fetchActivities: async (projectId) => {
-    if (apiMode === 'mock') {
-      // Mock mode: activities already loaded
-      return;
-    }
-
-    // API mode: fetch activities from backend
+    set({ isLoading: true, error: null });
     try {
       const response = await projectsApi.activity(projectId);
-      set({ activities: response.data.data });
+      set({ activities: response.data.data, isLoading: false });
     } catch (error) {
       const message =
-        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to fetch activities';
-      set({ error: message });
+        (error as any)?.response?.data?.message ??
+        '获取活动记录失败';
+      set({ error: message, isLoading: false });
     }
   },
 

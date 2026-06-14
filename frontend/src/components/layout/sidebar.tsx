@@ -9,6 +9,7 @@ import {
   FolderKanban,
   Bot,
   GitBranch,
+  FileText,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -21,6 +22,7 @@ const navItems = [
   { label: '项目', href: '/dashboard/projects', icon: FolderKanban },
   { label: 'Agent', href: '/dashboard/agents', icon: Bot },
   { label: '工作流', href: '/dashboard/workflows', icon: GitBranch },
+  { label: '文档', href: '/dashboard/docs', icon: FileText },
   { label: '设置', href: '/dashboard/settings', icon: Settings },
 ];
 

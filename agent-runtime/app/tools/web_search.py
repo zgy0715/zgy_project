@@ -1,7 +1,9 @@
 """Web search tool for internet information retrieval."""
 
+import ipaddress
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 from app.tools.base import BaseTool, ToolResult
 
@@ -79,6 +81,50 @@ class WebSearchTool(BaseTool):
                 error=f"Web search failed: {str(e)}",
             )
 
+    def _is_url_allowed(self, url: str) -> bool:
+        """Check if URL is allowed (not internal/private network).
+
+        Args:
+            url: The URL to check.
+
+        Returns:
+            True if the URL is allowed, False otherwise.
+        """
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            if not hostname:
+                return False
+
+            # Block non-http(s) schemes
+            if parsed.scheme not in ('http', 'https'):
+                return False
+
+            # Block cloud metadata endpoints
+            blocked_hostnames = [
+                '169.254.169.254',  # AWS/GCP/Azure metadata
+                'metadata.google.internal',
+                'metadata.azure.com',
+            ]
+            if hostname in blocked_hostnames:
+                return False
+
+            # Block private/internal IP ranges
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                    return False
+            except ValueError:
+                pass  # hostname is not an IP, might be a domain
+
+            # Block localhost
+            if hostname in ('localhost', '127.0.0.1', '::1'):
+                return False
+
+            return True
+        except Exception:
+            return False
+
     async def fetch_url(self, url: str) -> ToolResult:
         """Fetch and extract text content from a URL.
 
@@ -88,6 +134,9 @@ class WebSearchTool(BaseTool):
         Returns:
             ToolResult with the page content.
         """
+        if not self._is_url_allowed(url):
+            return ToolResult(success=False, error=f"URL blocked for security: {url}")
+
         try:
             import httpx
 

@@ -1,5 +1,6 @@
 """Application configuration management using Pydantic BaseSettings."""
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -21,6 +22,13 @@ class LLMConfig(BaseSettings):
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1)
     timeout: int = Field(default=120, ge=1)
+
+    def model_post_init(self, __context: object) -> None:
+        """Support OPENAI_API_KEY as alias for LLM_OPENAI_API_KEY."""
+        if not self.openai_api_key:
+            alias_key = os.environ.get("OPENAI_API_KEY", "")
+            if alias_key:
+                self.openai_api_key = alias_key
 
 
 class RedisConfig(BaseSettings):

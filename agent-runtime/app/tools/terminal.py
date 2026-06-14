@@ -72,11 +72,10 @@ ALLOWED_COMMANDS: list[str] = [
     "file", "stat", "tree", "du", "df",
     # Text processing
     "grep", "egrep", "fgrep", "rg", "ack",
-    "awk", "sed", "sort", "uniq", "cut", "tr", "tee",
+    "sort", "uniq", "cut", "tr", "tee",
     "diff", "comm", "paste", "column",
-    # Development
-    "git", "python", "python3", "node", "npm", "npx",
-    "java", "javac", "mvn", "gradle", "go", "cargo", "rustc",
+    # Development (interpreters removed — they allow arbitrary code execution)
+    "git", "java", "javac", "mvn", "gradle", "go", "cargo", "rustc",
     "make", "cmake", "gcc", "g++", "clang", "clang++",
     "pytest", "unittest", "jest", "vitest",
     # Process info
@@ -117,7 +116,7 @@ def _extract_base_command(command: str) -> str:
 
     # Handle pipe chains — check each segment
     # For now, extract the very first command
-    first_segment = re.split(r"[|;&]", stripped, maxsplit=1)[0].strip()
+    first_segment = re.split(r"[|;&]|\|\||&&", stripped, maxsplit=1)[0].strip()
 
     # Try shlex split for proper tokenization
     try:
@@ -237,6 +236,8 @@ class TerminalTool(BaseTool):
             )
 
         except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
             logger.warning("Command timed out: %s", command[:100])
             return ToolResult(
                 success=False,
@@ -277,7 +278,8 @@ class TerminalTool(BaseTool):
     def _is_command_safe(self, command: str) -> bool:
         """Check if a command is safe to execute.
 
-        Uses a three-layer defense:
+        Uses a four-layer defense:
+        0. Reject dangerous shell syntax patterns (command substitution, etc.)
         1. Extract base command and verify against whitelist
         2. Check full command string against dangerous regex patterns
         3. Inspect all pipe segments for dangerous sub-commands
@@ -288,8 +290,24 @@ class TerminalTool(BaseTool):
         Returns:
             True if the command appears safe, False otherwise.
         """
+        # Layer 0: Reject dangerous shell syntax patterns
+        dangerous_patterns = [
+            (r'\$\(', "command substitution $(...)"),
+            (r'`', "backtick command substitution"),
+            (r'\$\{', "parameter expansion ${...}"),
+            (r'>>', "append redirect"),
+        ]
+        for pattern, description in dangerous_patterns:
+            if re.search(pattern, command):
+                logger.warning(
+                    "Command rejected (forbidden pattern '%s'): %s",
+                    description,
+                    command[:100],
+                )
+                return False
+
         # Layer 1: Check each pipe/chain segment
-        segments = re.split(r"[|;&]", command)
+        segments = re.split(r"[|;&]|\|\||&&", command)
         for segment in segments:
             base_cmd = _extract_base_command(segment)
 

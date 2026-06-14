@@ -3,6 +3,7 @@ package com.deepagent.config;
 import com.deepagent.auth.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -39,6 +40,7 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final UserDetailsService userDetailsService;
+    private final RedisTemplate<String, String> redisTemplate;
 
     /**
      * Intercepts STOMP commands to authenticate CONNECT frames.
@@ -60,6 +62,15 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
                 if (token != null && jwtTokenProvider.validateAccessToken(token)) {
                     try {
+                        // Check token blacklist
+                        String jti = jwtTokenProvider.getJtiFromToken(token);
+                        if (jti != null) {
+                            Boolean isBlacklisted = redisTemplate.hasKey("token:blacklist:" + jti);
+                            if (Boolean.TRUE.equals(isBlacklisted)) {
+                                throw new org.springframework.messaging.MessageDeliveryException("Token has been revoked");
+                            }
+                        }
+
                         var username = jwtTokenProvider.getUsernameFromToken(token);
                         var userDetails = userDetailsService.loadUserByUsername(username);
 
@@ -68,6 +79,8 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
                         accessor.setUser(authentication);
                         log.debug("WebSocket STOMP authenticated user: {}", username);
+                    } catch (org.springframework.messaging.MessageDeliveryException e) {
+                        throw e;
                     } catch (Exception e) {
                         log.warn("WebSocket STOMP authentication failed: {}", e.getMessage());
                         throw new org.springframework.messaging.MessageDeliveryException("Authentication failed: " + e.getMessage());

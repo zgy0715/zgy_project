@@ -4,19 +4,10 @@ import { useState, useRef, useEffect } from 'react';
 import { Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
+import { AGENT_EMOJI_MAP } from '@/lib/constants';
 import { MessageBubble } from './message-bubble';
 import { AgentStatusBadge } from './agent-status';
 import type { ChatMessage, Agent, ThinkingChain as ThinkingChainType } from '@/types';
-
-// Agent type emoji map
-const agentEmojiMap: Record<string, string> = {
-  coder: '🧑‍💻',
-  reviewer: '🔍',
-  tester: '🧪',
-  deployer: '🚀',
-  planner: '📋',
-  custom: '⚙️',
-};
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -77,8 +68,10 @@ export function ChatPanel({
   const getAgent = (agentId: string) => agents.find((a) => a.id === agentId);
 
   // Helper: get thinking chain for a message
-  const getThinkingChain = (messageId: string) =>
-    thinkingChains.find((tc) => tc.agentId === (getAgent(messageId)?.id));
+  const getThinkingChain = (agentId: string | undefined) => {
+    if (!agentId) return undefined;
+    return thinkingChains.find((tc) => tc.agentId === agentId);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -87,7 +80,7 @@ export function ChatPanel({
         {currentAgent ? (
           <>
             <span className="text-lg">
-              {agentEmojiMap[currentAgent.agentType] ?? '🤖'}
+              {AGENT_EMOJI_MAP[currentAgent.agentType] ?? '🤖'}
             </span>
             <span className="text-sm font-medium text-white">
               {currentAgent.name}
@@ -138,7 +131,7 @@ export function ChatPanel({
             }
             thinkingChain={
               message.role === 'assistant'
-                ? getThinkingChain(message.id)
+                ? getThinkingChain(message.agentId)
                 : undefined
             }
           />

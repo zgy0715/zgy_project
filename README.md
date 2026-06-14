@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/DeepAgent-v0.1.1-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
+<img src="https://img.shields.io/badge/DeepAgent-v0.2.0-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
 
 # 🤖 DeepAgent
 
@@ -533,6 +533,36 @@ Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——�
 ---
 
 ## 📋 变更日志
+
+## v0.1.2 - 2026-06-14
+
+### 重大变更: 移除 Mock 模式
+- 删除 `mock-data.ts` (1300+ 行硬编码数据)
+- `API_MODE` 从 `'mock' | 'api'` 改为固定 `'api'`
+- 所有 Store 移除 mock 分支逻辑
+- 登录页移除 Demo Mode 按钮
+
+### Critical 修复
+- Agent/Workflow 列表页增删改操作改为调用后端 API (原仅修改本地 state)
+- Code 页面添加 useEffect 自动加载文件树和文件内容
+- Docs 页面添加项目选择和文档加载功能
+- 修复 `user.id` 始终为空字符串 (改为使用 username 作为临时 ID)
+- 移除 Agent/Workflow 创建时硬编码的 `projectId: 'proj-1'`
+
+### High 修复
+- API 客户端 `agentsApi.list()` 和 `workflowsApi.list()` 新增 `projectId` 参数支持
+- Dashboard 移除硬编码统计数据 (change/testPassRate/codeLines 估算值)
+- Settings 主题切换修复 system 模式 (检测系统偏好)
+- Settings 修改密码标记为"开发中" (后端 API 未实现)
+- Token refresh 后同步 Zustand store 中的 token
+- Workflow 页面移除硬编码 `workflowId="default"`
+- 项目详情页 workflows 按 projectId 过滤
+- Middleware 添加 `/auth/forgot-password` 到公开路径
+
+### 代码清理
+- 移除 terminal.tsx 中的 API_MODE 条件判断和 simulateCommand
+- 移除 code-editor.tsx 中的 mock 注释
+- Terminal 本地命令精简为 help/clear/echo/date/whoami
 
 ## v0.1.1 - 2026-06-13
 

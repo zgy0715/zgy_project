@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Github, ArrowRight, Play, ChevronDown } from 'lucide-react';
-import { useAuth } from '@/lib/hooks/use-auth';
-import { API_MODE } from '@/lib/constants';
 
 // Animation variants
 const containerVariants = {
@@ -122,16 +120,10 @@ const agents = [
 ];
 
 export default function HomePage() {
-  const { login } = useAuth();
   const router = useRouter();
-  const isMock = API_MODE === 'mock';
 
-  const handleDemoClick = async () => {
-    if (isMock) {
-      await login({ username: 'demo', password: 'demo' });
-    } else {
-      router.push('/dashboard');
-    }
+  const handleLoginClick = () => {
+    router.push('/auth/login');
   };
 
   // Terminal animation state
@@ -248,11 +240,11 @@ export default function HomePage() {
               <ArrowRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
             </Link>
             <button
-              onClick={handleDemoClick}
+              onClick={handleLoginClick}
               className="border border-surface-3 hover:border-brand-500/50 text-zinc-300 hover:text-white px-8 py-3.5 rounded-lg text-lg font-medium transition-all flex items-center gap-2"
             >
               <Play className="w-4 h-4" />
-              查看演示
+              登录使用
             </button>
           </motion.div>
 

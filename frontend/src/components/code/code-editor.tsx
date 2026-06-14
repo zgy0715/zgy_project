@@ -5,7 +5,7 @@ import Editor, { type OnMount } from '@monaco-editor/react';
 import { Pencil, Save, Eye } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { useEditorStore } from '@/stores/editor-store';
-import { cn } from '@/lib/utils';
+import { cn, getMonacoLanguage } from '@/lib/utils';
 
 interface CodeEditorProps {
   value: string;
@@ -13,29 +13,6 @@ interface CodeEditorProps {
   readOnly?: boolean;
   fileId?: string;
   projectId?: string;
-}
-
-// Map file extension to Monaco language identifier
-function getMonacoLanguage(language: string): string {
-  const map: Record<string, string> = {
-    java: 'java',
-    python: 'python',
-    typescript: 'typescript',
-    tsx: 'typescript',
-    javascript: 'javascript',
-    jsx: 'javascript',
-    yaml: 'yaml',
-    xml: 'xml',
-    json: 'json',
-    markdown: 'markdown',
-    dockerfile: 'dockerfile',
-    sql: 'sql',
-    css: 'css',
-    html: 'html',
-    shell: 'shell',
-    plaintext: 'plaintext',
-  };
-  return map[language] ?? 'plaintext';
 }
 
 export function CodeEditor({
@@ -59,7 +36,7 @@ export function CodeEditor({
     if (projectId) {
       saveFile(projectId, fileId);
     } else {
-      // Mock mode: just mark as not dirty
+      // No project context: just mark as not dirty
       useEditorStore.setState((state) => ({
         openTabs: state.openTabs.map((t) =>
           t.fileId === fileId ? { ...t, isDirty: false } : t

@@ -8,6 +8,7 @@ import com.deepagent.auth.jwt.JwtTokenProvider;
 import com.deepagent.auth.repository.UserRepository;
 import com.deepagent.auth.service.AuthService;
 import com.deepagent.common.exception.BusinessException;
+import com.deepagent.common.util.ValidationUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -38,11 +39,11 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByUsername(request.username())) {
-            throw new BusinessException("Username already exists: " + request.username());
-        }
-        if (userRepository.existsByEmail(request.email())) {
-            throw new BusinessException("Email already exists: " + request.email());
+        ValidationUtil.validateUsername(request.username());
+        ValidationUtil.validateEmail(request.email());
+
+        if (userRepository.existsByUsername(request.username()) || userRepository.existsByEmail(request.email())) {
+            throw new BusinessException("注册失败，请检查输入信息");
         }
 
         var user = User.builder()
@@ -99,6 +100,10 @@ public class AuthServiceImpl implements AuthService {
         var username = jwtTokenProvider.getUsernameFromToken(refreshToken);
         var user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new BusinessException("User not found for refresh token"));
+
+        if (user.getRefreshToken() == null || !user.getRefreshToken().equals(refreshToken)) {
+            throw new BusinessException("无效的刷新令牌");
+        }
 
         if (!user.isEnabled()) {
             throw new BusinessException("Account is disabled");

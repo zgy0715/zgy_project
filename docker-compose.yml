@@ -86,7 +86,7 @@ services:
       SPRING_RABBITMQ_HOST: rabbitmq
       AGENT_RUNTIME_URL: http://agent-runtime:8000
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-in-production}
-    ports:ths-i
+    ports:
       - "8080:8080"
     depends_on:
       postgres:
@@ -107,8 +107,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://deepagent:deepagent_secret@rabbitmq:5672/
       LLM_PROVIDER: openai
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder}
-      LLM_VECTOR_ENGINE_LIBRARY: /app/vecto?Piense set OPENAI_API_KEY _nvirinment variabnigs.so
+      LLM_OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder}
+      LLM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      LLM_OPENAI_MODEL: ${LLM_MODEL:-gpt-4o}
+      VECTOR_ENGINE_URL: http://localhost:8080
     ports:
       - "8000:8000"
       - "50051:50051"

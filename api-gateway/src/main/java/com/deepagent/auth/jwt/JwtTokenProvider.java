@@ -14,6 +14,8 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.UUID;
 
+import jakarta.annotation.PostConstruct;
+
 /**
  * JWT token provider for generating and validating JSON Web Tokens.
  *
@@ -31,24 +33,37 @@ import java.util.UUID;
 @Component
 public class JwtTokenProvider {
 
-    private final SecretKey signingKey;
+    private SecretKey signingKey;
     private final long accessTokenExpirationMs;
     private final long refreshTokenExpirationMs;
+
+    @Value("${jwt.secret}")
+    private String secret;
 
     /**
      * Constructs the JwtTokenProvider with configuration values.
      *
-     * @param secret                    the Base64-encoded secret key for JWT signing
      * @param accessTokenExpirationMs   access token expiration in milliseconds
      * @param refreshTokenExpirationMs  refresh token expiration in milliseconds
      */
     public JwtTokenProvider(
-            @Value("${jwt.secret}") String secret,
             @Value("${jwt.access-token-expiration:3600000}") long accessTokenExpirationMs,
             @Value("${jwt.refresh-token-expiration:86400000}") long refreshTokenExpirationMs) {
-        this.signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.accessTokenExpirationMs = accessTokenExpirationMs;
         this.refreshTokenExpirationMs = refreshTokenExpirationMs;
+    }
+
+    /**
+     * Validates that the JWT secret is configured and initializes the signing key.
+     *
+     * @throws IllegalStateException if the secret is not set
+     */
+    @PostConstruct
+    public void init() {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET environment variable must be set");
+        }
+        signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
@@ -117,6 +132,21 @@ public class JwtTokenProvider {
      */
     public String getTokenId(String token) {
         return parseClaims(token).getId();
+    }
+
+    /**
+     * Extracts the JWT ID (JTI) from a token.
+     * Alias for {@link #getTokenId(String)}.
+     *
+     * @param token the JWT token
+     * @return the unique token identifier, or null if extraction fails
+     */
+    public String getJtiFromToken(String token) {
+        try {
+            return parseClaims(token).getId();
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**

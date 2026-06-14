@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
@@ -9,14 +10,13 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { useProjectStore } from '@/stores/project-store';
-import { useAgentStore } from '@/stores/agent-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { StatsCard } from '@/components/dashboard/stats-card';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
-import { AgentPerformanceChart } from '@/components/dashboard/agent-performance';
 import { Badge } from '@/components/ui/badge';
+import { Spinner } from '@/components/ui/spinner';
 import { cn, formatRelativeTime } from '@/lib/utils';
-import type { Project, AgentPerformance } from '@/types';
+import type { Project } from '@/types';
 
 // Animation variants
 const containerVariants = {
@@ -32,46 +32,6 @@ const itemVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
 };
 
-// Mock agent performance data for the chart
-const mockAgentPerformance: AgentPerformance[] = [
-  {
-    agentId: 'agent-coder',
-    agentName: 'Coder',
-    totalTasks: 42,
-    successRate: 0.95,
-    avgLatency: 1800,
-    totalTokens: 52000,
-    lastActiveAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-  },
-  {
-    agentId: 'agent-reviewer',
-    agentName: 'Reviewer',
-    totalTasks: 38,
-    successRate: 0.92,
-    avgLatency: 2100,
-    totalTokens: 28000,
-    lastActiveAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-  },
-  {
-    agentId: 'agent-tester',
-    agentName: 'Tester',
-    totalTasks: 35,
-    successRate: 0.97,
-    avgLatency: 2500,
-    totalTokens: 45000,
-    lastActiveAt: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-  },
-  {
-    agentId: 'agent-deployer',
-    agentName: 'Deployer',
-    totalTasks: 18,
-    successRate: 0.89,
-    avgLatency: 3200,
-    totalTokens: 12000,
-    lastActiveAt: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-  },
-];
-
 // Agent status dots for project cards
 const agentDots = [
   { color: 'bg-blue-500', label: 'Coder' },
@@ -82,9 +42,26 @@ const agentDots = [
 
 export default function DashboardPage() {
   const projects = useProjectStore((s) => s.projects);
+  const currentProject = useProjectStore((s) => s.currentProject);
   const activities = useProjectStore((s) => s.activities);
-  const agents = useAgentStore((s) => s.agents);
+  const fetchProjects = useProjectStore((s) => s.fetchProjects);
+  const fetchActivities = useProjectStore((s) => s.fetchActivities);
+  const isProjectsLoading = useProjectStore((s) => s.isLoading);
   const user = useAuthStore((s) => s.user);
+
+  // Fetch projects on mount if not loaded
+  useEffect(() => {
+    if (projects.length === 0) {
+      fetchProjects();
+    }
+  }, []);
+
+  // Fetch activities when current project changes
+  useEffect(() => {
+    if (currentProject?.id) {
+      fetchActivities(currentProject.id);
+    }
+  }, [currentProject?.id, fetchActivities]);
 
   // Derive stats from store data
   const totalProjects = projects.length;
@@ -96,7 +73,7 @@ export default function DashboardPage() {
     (sum, p) => sum + (p.stats?.codeFiles ?? 0) * 350,
     0
   );
-  const testPassRate = agents.length > 0 ? 94.2 : 0;
+  const testPassRate = 0;
 
   const statsData = [
     {
@@ -127,6 +104,14 @@ export default function DashboardPage() {
       icon: <CheckCircle className="w-5 h-5" />,
     },
   ];
+
+  if (isProjectsLoading && projects.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -200,14 +185,6 @@ export default function DashboardPage() {
           </div>
         </motion.div>
       </div>
-
-      {/* Agent Performance Chart */}
-      <motion.div variants={itemVariants}>
-        <h2 className="text-lg font-semibold text-white mb-4">Agent 性能</h2>
-        <div className="bg-surface-1 border border-surface-3 rounded-xl p-6">
-          <AgentPerformanceChart data={mockAgentPerformance} />
-        </div>
-      </motion.div>
     </motion.div>
   );
 }
@@ -264,7 +241,7 @@ function ProjectCard({ project }: { project: Project }) {
               </span>
             </div>
             <span className="text-xs text-zinc-500">
-              {formatRelativeTime(project.stats?.lastActivityAt ?? '')}
+              {project.stats?.lastActivityAt ? formatRelativeTime(project.stats.lastActivityAt) : '—'}
             </span>
           </div>
         </div>

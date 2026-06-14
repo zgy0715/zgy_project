@@ -3,34 +3,12 @@
 import { useMemo } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import { Spinner } from '@/components/ui/spinner';
+import { getMonacoLanguage } from '@/lib/utils';
 
 interface CodeDiffProps {
   original: string;
   modified: string;
   language: string;
-}
-
-// Map file extension to Monaco language identifier
-function getMonacoLanguage(language: string): string {
-  const map: Record<string, string> = {
-    java: 'java',
-    python: 'python',
-    typescript: 'typescript',
-    tsx: 'typescript',
-    javascript: 'javascript',
-    jsx: 'javascript',
-    yaml: 'yaml',
-    xml: 'xml',
-    json: 'json',
-    markdown: 'markdown',
-    dockerfile: 'dockerfile',
-    sql: 'sql',
-    css: 'css',
-    html: 'html',
-    shell: 'shell',
-    plaintext: 'plaintext',
-  };
-  return map[language] ?? 'plaintext';
 }
 
 export function CodeDiff({ original, modified, language }: CodeDiffProps) {

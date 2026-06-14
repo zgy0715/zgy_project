@@ -3,10 +3,24 @@
 import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Search, Bell, Plus, ChevronRight } from 'lucide-react';
+import {
+  Search,
+  Bell,
+  Plus,
+  ChevronRight,
+  CheckCircle,
+  AlertTriangle,
+  Bot,
+  GitBranch,
+  MessageSquare,
+  Rocket,
+  Check,
+} from 'lucide-react';
 import { UserMenu } from './user-menu';
 import { Button } from '@/components/ui/button';
 import { useProjectStore } from '@/stores/project-store';
+import { useNotificationStore } from '@/stores/notification-store';
+import { cn, formatRelativeTime } from '@/lib/utils';
 
 interface HeaderProps {
   title?: string;
@@ -34,6 +48,16 @@ function useBreadcrumbs() {
   });
 }
 
+// Icon mapping for notifications
+const iconMap: Record<string, React.ElementType> = {
+  'check-circle': CheckCircle,
+  'alert-triangle': AlertTriangle,
+  bot: Bot,
+  'git-branch': GitBranch,
+  'message-square': MessageSquare,
+  rocket: Rocket,
+};
+
 export function Header({ title, breadcrumbs: propBreadcrumbs }: HeaderProps) {
   const pathname = usePathname();
   const autoBreadcrumbs = useBreadcrumbs();
@@ -45,6 +69,14 @@ export function Header({ title, breadcrumbs: propBreadcrumbs }: HeaderProps) {
   const searchRef = useRef<HTMLDivElement>(null);
   const projects = useProjectStore((s) => s.projects);
 
+  // Notification state
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+  const notifications = useNotificationStore((s) => s.notifications);
+  const unreadCount = useNotificationStore((s) => s.unreadCount);
+  const markAsRead = useNotificationStore((s) => s.markAsRead);
+  const markAllAsRead = useNotificationStore((s) => s.markAllAsRead);
+
   // Filter projects by search query
   const searchResults = searchQuery.trim()
     ? projects.filter((p) =>
@@ -52,11 +84,14 @@ export function Header({ title, breadcrumbs: propBreadcrumbs }: HeaderProps) {
       )
     : [];
 
-  // Close search dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setSearchOpen(false);
+      }
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -150,10 +185,77 @@ export function Header({ title, breadcrumbs: propBreadcrumbs }: HeaderProps) {
         </div>
 
         {/* Notifications */}
-        <button className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-surface-2 transition-colors relative">
-          <Bell className="w-5 h-5" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-brand-500 rounded-full" />
-        </button>
+        <div className="relative" ref={notifRef}>
+          <button
+            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-surface-2 transition-colors relative"
+            onClick={() => setNotifOpen(!notifOpen)}
+          >
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-brand-500 rounded-full" />
+            )}
+          </button>
+
+          {/* Notification dropdown */}
+          {notifOpen && (
+            <div className="absolute top-full mt-2 right-0 w-96 bg-surface-1 border border-surface-3 rounded-xl shadow-xl z-50">
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-surface-3">
+                <span className="text-sm font-medium text-white">通知</span>
+                {unreadCount > 0 && (
+                  <button
+                    onClick={markAllAsRead}
+                    className="flex items-center gap-1 text-xs text-brand-400 hover:text-brand-300 transition-colors"
+                  >
+                    <Check className="w-3 h-3" />
+                    全部已读
+                  </button>
+                )}
+              </div>
+
+              {/* Notification list */}
+              <div className="max-h-96 overflow-y-auto">
+                {notifications.length > 0 ? (
+                  notifications.map((notification) => {
+                    const IconComponent =
+                      iconMap[notification.icon] ?? Bell;
+                    return (
+                      <div
+                        key={notification.id}
+                        className={cn(
+                          'flex items-start gap-3 px-4 py-3 hover:bg-surface-2 transition-colors cursor-pointer border-l-2',
+                          notification.read
+                            ? 'border-l-transparent'
+                            : 'border-l-brand-500'
+                        )}
+                        onClick={() => markAsRead(notification.id)}
+                      >
+                        <div className="mt-0.5 w-8 h-8 rounded-lg bg-surface-3 flex items-center justify-center flex-shrink-0">
+                          <IconComponent className="w-4 h-4 text-zinc-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white">
+                            {notification.title}
+                          </p>
+                          <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">
+                            {notification.description}
+                          </p>
+                          <p className="text-xs text-zinc-600 mt-1">
+                            {formatRelativeTime(notification.timestamp)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="px-4 py-8 text-sm text-zinc-500 text-center">
+                    暂无通知
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* New project button */}
         <Link href="/dashboard/projects">

@@ -4,8 +4,8 @@ export const APP_NAME = 'DeepAgent';
 export const APP_VERSION = '0.1.0';
 export const APP_DESCRIPTION = 'Multi-AI Agent Collaborative Development Platform';
 
-// API mode: 'mock' uses local mock data, 'api' uses real backend
-export const API_MODE = (process.env.NEXT_PUBLIC_API_MODE ?? 'mock') as 'mock' | 'api';
+// API mode: only 'api' mode is supported
+export const API_MODE = 'api' as const;
 
 // API endpoints
 export const API_ENDPOINTS = {
@@ -84,6 +84,16 @@ export const WS_EVENTS = {
   NOTIFICATION: 'notification',
   ERROR: 'error',
 } as const;
+
+// Agent type emoji map
+export const AGENT_EMOJI_MAP: Record<string, string> = {
+  coder: '🧑‍💻',
+  reviewer: '🔍',
+  tester: '🧪',
+  deployer: '🚀',
+  planner: '📋',
+  custom: '⚙️',
+};
 
 // Agent type metadata
 export const AGENT_TYPE_META: Record<

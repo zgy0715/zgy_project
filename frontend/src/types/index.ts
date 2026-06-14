@@ -31,19 +31,24 @@ export interface AuthResponse {
   role: string;
 }
 
-// API response wrapper
+// API response wrapper (matching backend ApiResponse.java)
 export interface ApiResponse<T> {
-  code: number | string;
+  success: boolean;
+  code: string;
   message: string;
   data: T;
+  timestamp?: string;
 }
 
+// Paginated response (matching backend PageResponse.java)
 export interface PaginatedResponse<T> {
-  items: T[];
-  total: number;
-  page: number;
+  content: T[];
+  pageNumber: number;
   pageSize: number;
+  totalElements: number;
   totalPages: number;
+  first: boolean;
+  last: boolean;
 }
 
 // WebSocket event types (legacy Socket.IO - kept for backward compatibility)

@@ -45,6 +45,11 @@ class StompClient {
   private maxReconnectAttempts: number = 5;
   private onConnectCallbacks: ConnectionCallback[] = [];
   private onErrorCallbacks: ErrorCallback[] = [];
+  private currentProjectId: string | null = null;
+  private currentProjectCallbacks: {
+    onAgentEvent?: (event: AgentEvent) => void;
+    onWorkflowEvent?: (event: WorkflowEvent) => void;
+  } | null = null;
 
   // Connect to STOMP server via SockJS
   connect(token?: string): void {
@@ -63,6 +68,10 @@ class StompClient {
         console.log('[STOMP] Connected:', frame.headers);
         this.connected = true;
         this.reconnectAttempts = 0;
+        // Re-subscribe to project channel if one was previously joined
+        if (this.currentProjectId && this.currentProjectCallbacks) {
+          this.joinProject(this.currentProjectId, this.currentProjectCallbacks);
+        }
         this.onConnectCallbacks.forEach((cb) => cb());
       },
       onDisconnect: (frame) => {
@@ -138,6 +147,10 @@ class StompClient {
       onWorkflowEvent?: (event: WorkflowEvent) => void;
     }
   ): void {
+    // Track current project for reconnection resubscription
+    this.currentProjectId = projectId;
+    this.currentProjectCallbacks = callbacks;
+
     if (!this.client?.active) {
       console.warn('[STOMP] Cannot join project: not connected');
       return;
@@ -170,6 +183,10 @@ class StompClient {
 
   // Leave a project channel
   leaveProject(projectId: string): void {
+    if (this.currentProjectId === projectId) {
+      this.currentProjectId = null;
+      this.currentProjectCallbacks = null;
+    }
     const topic = `/topic/project/${projectId}`;
     const subscription = this.subscriptions.get(topic);
     if (subscription) {

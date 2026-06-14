@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { useEffect, use, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { X, GitCompare, Terminal as TerminalIcon } from 'lucide-react';
 import { FileTree } from '@/components/code/file-tree';
@@ -87,9 +87,25 @@ export default function CodePage({
   const closeTab = useEditorStore((s) => s.closeTab);
   const setActiveTab = useEditorStore((s) => s.setActiveTab);
   const toggleDiffMode = useEditorStore((s) => s.toggleDiffMode);
+  const fetchFileTree = useEditorStore((s) => s.fetchFileTree);
+  const fetchFileContent = useEditorStore((s) => s.fetchFileContent);
 
   // Current active tab info
   const activeTab = openTabs.find((t) => t.id === activeTabId) ?? null;
+
+  // Load file tree on mount
+  useEffect(() => {
+    if (projectId) {
+      fetchFileTree(projectId);
+    }
+  }, [projectId, fetchFileTree]);
+
+  // Auto-load file content when active tab changes
+  useEffect(() => {
+    if (activeTab && fileContent[activeTab.fileId] === undefined) {
+      fetchFileContent(projectId, activeTab.fileId);
+    }
+  }, [activeTabId, activeTab, projectId, fetchFileContent, fileContent]);
 
   // Current file content from store
   const currentFileContent = activeTab

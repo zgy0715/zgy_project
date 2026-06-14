@@ -9,6 +9,9 @@ from app.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
+# Maximum file size in bytes (default: 10 MB)
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+
 
 def _get_allowed_directories() -> list[str]:
     """Get allowed directories from application configuration."""
@@ -80,6 +83,13 @@ class FileReadTool(BaseTool):
             file_path = Path(path)
             if not file_path.exists():
                 return ToolResult(success=False, error=f"File not found: {path}")
+
+            file_size = file_path.stat().st_size
+            if file_size > MAX_FILE_SIZE_BYTES:
+                return ToolResult(
+                    success=False,
+                    error=f"File too large: {file_size} bytes (max: {MAX_FILE_SIZE_BYTES} bytes)",
+                )
 
             content = file_path.read_text(encoding="utf-8")
 
@@ -155,6 +165,13 @@ class FileWriteTool(BaseTool):
             return ToolResult(
                 success=False,
                 error=f"Access denied: path '{path}' is outside allowed directories",
+            )
+
+        content_size = len(content.encode('utf-8'))
+        if content_size > MAX_FILE_SIZE_BYTES:
+            return ToolResult(
+                success=False,
+                error=f"Content too large: {content_size} bytes (max: {MAX_FILE_SIZE_BYTES} bytes)",
             )
 
         try:

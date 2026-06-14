@@ -9,6 +9,7 @@ import { useProjectStore } from '@/stores/project-store';
 
 // Tab navigation configuration
 const tabs = [
+  { label: '概览', href: (id: string) => `/dashboard/projects/${id}` },
   { label: '工作流', href: (id: string) => `/dashboard/projects/${id}/workflow` },
   { label: 'Agent 对话', href: (id: string) => `/dashboard/projects/${id}/agents` },
   { label: '代码编辑器', href: (id: string) => `/dashboard/projects/${id}/code` },
@@ -35,9 +36,14 @@ export default function ProjectDetailLayout({
   );
 
   // Determine active tab from pathname
-  const activeTab = tabs.findIndex((tab) =>
-    pathname.startsWith(tab.href(id))
-  );
+  const activeTab = tabs.findIndex((tab, index) => {
+    const tabHref = tab.href(id);
+    // Exact match for overview tab (first tab), startsWith for others
+    if (index === 0) {
+      return pathname === tabHref;
+    }
+    return pathname.startsWith(tabHref);
+  });
 
   return (
     <div className="flex flex-col h-full">

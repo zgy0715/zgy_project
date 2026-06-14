@@ -1,6 +1,7 @@
 """Code semantic search tool that calls the C++ vector engine."""
 
 import logging
+import os
 from typing import Any
 
 from app.tools.base import BaseTool, ToolResult
@@ -54,7 +55,8 @@ class CodeSearchTool(BaseTool):
             if file_pattern:
                 filters["file_pattern"] = file_pattern
 
-            async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            verify_ssl = os.getenv("VECTOR_ENGINE_VERIFY_SSL", "true").lower() != "false"
+            async with httpx.AsyncClient(timeout=30.0, verify=verify_ssl) as client:
                 response = await client.post(
                     f"{self.engine_url}/api/v1/search",
                     json={

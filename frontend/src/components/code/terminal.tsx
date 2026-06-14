@@ -16,7 +16,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const commandHistoryRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
   const currentLineRef = useRef('');
 
@@ -85,7 +85,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
           xterm.writeln('');
           if (currentLine.trim()) {
             executeCommand(currentLine.trim());
-            setCommandHistory(prev => [...prev, currentLine.trim()]);
+            commandHistoryRef.current = [...commandHistoryRef.current, currentLine.trim()];
             historyIndexRef.current = -1;
           }
           currentLine = '';
@@ -103,30 +103,36 @@ export default function Terminal({ projectId, className }: TerminalProps) {
           break;
         case '\x1b[A': // Up arrow
           // Navigate command history
-          if (commandHistory.length > 0) {
-            const newIndex = Math.min(historyIndexRef.current + 1, commandHistory.length - 1);
-            if (newIndex !== historyIndexRef.current) {
-              historyIndexRef.current = newIndex;
-              const cmd = commandHistory[commandHistory.length - 1 - newIndex];
-              // Clear current line and write history command
-              xterm.write(`\x1b[2K\r\x1b[32m$\x1b[0m ${cmd}`);
-              currentLine = cmd;
-              cursorPos = cmd.length;
+          {
+            const history = commandHistoryRef.current;
+            if (history.length > 0) {
+              const newIndex = Math.min(historyIndexRef.current + 1, history.length - 1);
+              if (newIndex !== historyIndexRef.current) {
+                historyIndexRef.current = newIndex;
+                const cmd = history[history.length - 1 - newIndex];
+                // Clear current line and write history command
+                xterm.write(`\x1b[2K\r\x1b[32m$\x1b[0m ${cmd}`);
+                currentLine = cmd;
+                cursorPos = cmd.length;
+              }
             }
           }
           break;
         case '\x1b[B': // Down arrow
-          if (historyIndexRef.current > 0) {
-            historyIndexRef.current--;
-            const cmd = commandHistory[commandHistory.length - 1 - historyIndexRef.current];
-            xterm.write(`\x1b[2K\r\x1b[32m$\x1b[0m ${cmd}`);
-            currentLine = cmd;
-            cursorPos = cmd.length;
-          } else if (historyIndexRef.current === 0) {
-            historyIndexRef.current = -1;
-            xterm.write('\x1b[2K\r\x1b[32m$\x1b[0m ');
-            currentLine = '';
-            cursorPos = 0;
+          {
+            const history = commandHistoryRef.current;
+            if (historyIndexRef.current > 0) {
+              historyIndexRef.current--;
+              const cmd = history[history.length - 1 - historyIndexRef.current];
+              xterm.write(`\x1b[2K\r\x1b[32m$\x1b[0m ${cmd}`);
+              currentLine = cmd;
+              cursorPos = cmd.length;
+            } else if (historyIndexRef.current === 0) {
+              historyIndexRef.current = -1;
+              xterm.write('\x1b[2K\r\x1b[32m$\x1b[0m ');
+              currentLine = '';
+              cursorPos = 0;
+            }
           }
           break;
         case '\x1b[C': // Right arrow
@@ -155,7 +161,15 @@ export default function Terminal({ projectId, className }: TerminalProps) {
           if (data >= ' ' || data === '\t') {
             currentLine = currentLine.slice(0, cursorPos) + data + currentLine.slice(cursorPos);
             cursorPos++;
-            xterm.write(data);
+            // Rewrite from cursor position to handle mid-line insertion
+            if (cursorPos < currentLine.length) {
+              xterm.write(data + currentLine.slice(cursorPos));
+              // Move cursor back to insertion point
+              const moveBack = currentLine.length - cursorPos;
+              xterm.write(`\x1b[${moveBack}D`);
+            } else {
+              xterm.write(data);
+            }
           }
       }
       currentLineRef.current = currentLine;
@@ -181,18 +195,17 @@ export default function Terminal({ projectId, className }: TerminalProps) {
     const xterm = xtermRef.current;
     if (!xterm) return;
 
-    // In API mode, send command to backend via STOMP
-    if (process.env.NEXT_PUBLIC_API_MODE === 'api' && projectId) {
-      // Send command via STOMP to backend terminal service
+    // Send command to backend via STOMP
+    if (projectId) {
       stompClient.sendTerminalInput(projectId, command);
       return;
     }
 
-    // Mock mode: simulate command execution
-    simulateCommand(command, xterm);
+    // No project context: show local-only commands
+    handleLocalCommand(command, xterm);
   }, [projectId]);
 
-  const simulateCommand = (command: string, xterm: XTerm) => {
+  const handleLocalCommand = (command: string, xterm: XTerm) => {
     const parts = command.split(' ');
     const cmd = parts[0];
 
@@ -200,27 +213,18 @@ export default function Terminal({ projectId, className }: TerminalProps) {
       case 'help':
         xterm.writeln('\x1b[1;33mAvailable commands:\x1b[0m');
         xterm.writeln('  help        - Show this help message');
-        xterm.writeln('  ls          - List files');
-        xterm.writeln('  pwd         - Print working directory');
-        xterm.writeln('  echo        - Print text');
         xterm.writeln('  clear       - Clear terminal');
+        xterm.writeln('  echo        - Print text');
         xterm.writeln('  date        - Show current date');
         xterm.writeln('  whoami      - Show current user');
-        xterm.writeln('  python      - Run Python (simulated)');
-        xterm.writeln('  pytest      - Run tests (simulated)');
-        xterm.writeln('  git         - Git operations (simulated)');
-        break;
-      case 'ls':
-        xterm.writeln('\x1b[34msrc/\x1b[0m  \x1b[34mtests/\x1b[0m  \x1b[32mREADME.md\x1b[0m  \x1b[32mpom.xml\x1b[0m  \x1b[32mDockerfile\x1b[0m');
-        break;
-      case 'pwd':
-        xterm.writeln('/workspace/deepagent');
-        break;
-      case 'echo':
-        xterm.writeln(parts.slice(1).join(' '));
+        xterm.writeln('');
+        xterm.writeln('\x1b[33mNote: Connect to a project for full terminal access.\x1b[0m');
         break;
       case 'clear':
         xterm.clear();
+        break;
+      case 'echo':
+        xterm.writeln(parts.slice(1).join(' '));
         break;
       case 'date':
         xterm.writeln(new Date().toString());
@@ -228,50 +232,26 @@ export default function Terminal({ projectId, className }: TerminalProps) {
       case 'whoami':
         xterm.writeln('deepagent');
         break;
-      case 'python':
-        xterm.writeln('\x1b[33mPython 3.11.5 (simulated)\x1b[0m');
-        xterm.writeln('>>> (Interactive mode not available in demo)');
-        break;
-      case 'pytest':
-        xterm.writeln('\x1b[32m============================= test session starts =============================\x1b[0m');
-        xterm.writeln('collected 35 items');
-        xterm.writeln('');
-        xterm.writeln('\x1b[32mtest_agents.py ........\x1b[0m                                                  [ 22%]');
-        xterm.writeln('\x1b[32mtest_workflow.py .......\x1b[0m                                                 [ 43%]');
-        xterm.writeln('\x1b[32mtest_tools.py ..........\x1b[0m                                                [ 71%]');
-        xterm.writeln('\x1b[32mtest_api.py .........\x1b[0m                                                   [100%]');
-        xterm.writeln('');
-        xterm.writeln('\x1b[32m============================== 35 passed in 2.13s ==============================\x1b[0m');
-        break;
-      case 'git':
-        if (parts[1] === 'status') {
-          xterm.writeln('On branch \x1b[32mmaster\x1b[0m');
-          xterm.writeln('nothing to commit, working tree clean');
-        } else if (parts[1] === 'log') {
-          xterm.writeln('\x1b[33mcommit b58e6b1\x1b[0m (HEAD -> master, origin/master)');
-          xterm.writeln('Author: Demo User <demo@deepagent.dev>');
-          xterm.writeln('Date:   ' + new Date().toISOString().split('T')[0]);
-          xterm.writeln('');
-          xterm.writeln('    feat: implement interactive demo');
-        } else {
-          xterm.writeln(`\x1b[31mgit: '${parts[1]}' is not a git command.\x1b[0m`);
-        }
-        break;
       default:
-        xterm.writeln(`\x1b[31mbash: ${cmd}: command not found\x1b[0m`);
+        xterm.writeln(`\x1b[31m${cmd}: command not available (connect to a project for full terminal)\x1b[0m`);
         xterm.writeln('Type \x1b[33mhelp\x1b[0m for available commands.');
     }
   };
 
   // Receive terminal output from STOMP
   useEffect(() => {
-    if (process.env.NEXT_PUBLIC_API_MODE !== 'api' || !projectId) return;
+    if (!projectId) return;
 
     const unsubscribe = stompClient.subscribeTaskOutput(projectId, 'terminal', (output) => {
       if (xtermRef.current && output) {
         xtermRef.current.write(output);
       }
     });
+
+    // Update connection status based on STOMP state
+    if (stompClient.isConnected()) {
+      setIsConnected(true);
+    }
 
     return unsubscribe;
   }, [projectId]);

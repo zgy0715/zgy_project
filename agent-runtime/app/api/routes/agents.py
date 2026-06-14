@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
@@ -52,8 +53,16 @@ def _get_event_service() -> EventService:
 
 
 def _get_agent_or_404(agent_id: str):
-    """Retrieve an agent from the registry or raise 404."""
+    """Retrieve an agent from the registry or raise 404.
+
+    Supports lookup by UUID first, then by name as fallback.
+    """
     registry = _get_registry()
+    # Try UUID lookup first
+    agent = registry.get_by_id(agent_id)
+    if agent is not None:
+        return agent
+    # Fallback to name lookup
     try:
         return registry.get(agent_id)
     except KeyError:
@@ -104,7 +113,7 @@ async def create_agent(request: AgentCreateRequest) -> AgentResponse:
     state = agent.get_state()
 
     return AgentResponse(
-        id=str(uuid.uuid4()),
+        id=registry.get_id(agent.name),
         agent_type=request.agent_type,
         name=agent.name,
         description=agent.description,
@@ -138,7 +147,7 @@ async def list_agents(
 
     return [
         AgentResponse(
-            id=a.name,
+            id=registry.get_id(a.name),
             agent_type=a.agent_type,
             name=a.name,
             description=a.description,

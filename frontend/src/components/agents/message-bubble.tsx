@@ -3,22 +3,14 @@
 import { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
+import rehypeSanitize from 'rehype-sanitize';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AGENT_EMOJI_MAP } from '@/lib/constants';
 import { ThinkingChain } from './thinking-chain';
 import type { ChatMessage, Agent, ThinkingChain as ThinkingChainType } from '@/types';
-
-// Agent type emoji map
-const agentEmojiMap: Record<string, string> = {
-  coder: '🧑‍💻',
-  reviewer: '🔍',
-  tester: '🧪',
-  deployer: '🚀',
-  planner: '📋',
-  custom: '⚙️',
-};
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -49,7 +41,7 @@ export function MessageBubble({
             : 'bg-surface-2 text-zinc-300'
         )}
       >
-        {isUser ? '👤' : (agent ? agentEmojiMap[agent.agentType] ?? '🤖' : '🤖')}
+        {isUser ? '👤' : (agent ? AGENT_EMOJI_MAP[agent.agentType] ?? '🤖' : '🤖')}
       </div>
 
       {/* Message content area */}
@@ -110,8 +102,9 @@ function MarkdownContent({
   return (
     <div className="text-sm leading-relaxed prose-sm">
       <ReactMarkdown
+        rehypePlugins={[rehypeSanitize]}
         components={{
-          code({ className, children, ...props }) {
+          code({ className, children, ref, node, ...props }) {
             const match = /language-(\w+)/.exec(className ?? '');
             const codeString = String(children).replace(/\n$/, '');
 

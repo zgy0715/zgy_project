@@ -1,18 +1,9 @@
 'use client';
 
 import { cn } from '@/lib/utils';
+import { AGENT_EMOJI_MAP } from '@/lib/constants';
 import { AgentStatusDot } from './agent-status';
 import type { Agent } from '@/types';
-
-// Agent type emoji map
-const agentEmojiMap: Record<string, string> = {
-  coder: '🧑‍💻',
-  reviewer: '🔍',
-  tester: '🧪',
-  deployer: '🚀',
-  planner: '📋',
-  custom: '⚙️',
-};
 
 interface AgentSelectorProps {
   agents: Agent[];
@@ -31,7 +22,7 @@ export function AgentSelector({
       <div className="flex-1 overflow-y-auto py-2 scrollbar-thin">
         {agents.map((agent) => {
           const isSelected = selectedAgentId === agent.id;
-          const emoji = agentEmojiMap[agent.agentType] ?? '🤖';
+          const emoji = AGENT_EMOJI_MAP[agent.agentType] ?? '🤖';
 
           return (
             <button

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware.error_handler import register_error_handlers
 from app.api.middleware.request_logger import RequestLoggerMiddleware
-from app.api.routes import agents, health, search, workflows
+from app.api.routes import agents, documents, health, search, workflows
 from app.config import get_settings
 
 
@@ -52,7 +52,10 @@ async def lifespan(app: FastAPI):
             decode_responses=True,
         )
         await _redis_pool.ping()
-        logger.info("Redis connection pool initialized (%s)", settings.redis.url)
+        redis_url = str(settings.redis.url)
+        if '@' in redis_url:
+            redis_url = redis_url.split('@')[1]  # Only show host:port part
+        logger.info("Redis connection pool initialized (%s)", redis_url)
     except Exception as exc:
         logger.warning("Redis initialization failed: %s (continuing without cache)", exc)
         _redis_pool = None
@@ -160,6 +163,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
     app.include_router(workflows.router, prefix="/api/v1/workflows", tags=["Workflows"])
     app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
+    app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
 
     return app
 

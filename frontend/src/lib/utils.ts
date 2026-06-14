@@ -29,6 +29,9 @@ export function truncate(text: string, maxLength: number): string {
 
 // Generate a random ID (for client-side use only)
 export function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
   return Math.random().toString(36).substring(2, 15);
 }
 
@@ -78,4 +81,27 @@ export function getLanguageFromPath(path: string): string {
     bash: 'shell',
   };
   return langMap[ext] ?? 'plaintext';
+}
+
+// Map language name to Monaco editor language identifier
+export function getMonacoLanguage(language: string): string {
+  const map: Record<string, string> = {
+    java: 'java',
+    python: 'python',
+    typescript: 'typescript',
+    tsx: 'typescript',
+    javascript: 'javascript',
+    jsx: 'javascript',
+    yaml: 'yaml',
+    xml: 'xml',
+    json: 'json',
+    markdown: 'markdown',
+    dockerfile: 'dockerfile',
+    sql: 'sql',
+    css: 'css',
+    html: 'html',
+    shell: 'shell',
+    plaintext: 'plaintext',
+  };
+  return map[language] ?? 'plaintext';
 }

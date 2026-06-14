@@ -14,8 +14,10 @@ from app.graph.workflow import WorkflowEngine
 from app.models.enums import WorkflowStatus
 from app.models.schemas import (
     WorkflowCreateRequest,
+    WorkflowEdge,
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
+    WorkflowNode,
     WorkflowResponse,
 )
 
@@ -35,6 +37,25 @@ def _get_engine() -> WorkflowEngine:
     if _engine is None:
         _engine = WorkflowEngine()
     return _engine
+
+
+def _build_workflow_response(workflow_data: dict[str, Any]) -> WorkflowResponse:
+    """Build a WorkflowResponse from workflow data, ensuring proper node/edge types."""
+    nodes = workflow_data.get("nodes", [])
+    edges = workflow_data.get("edges", [])
+    # Convert dicts to model instances if needed
+    nodes = [WorkflowNode(**n) if isinstance(n, dict) else n for n in nodes]
+    edges = [WorkflowEdge(**e) if isinstance(e, dict) else e for e in edges]
+    return WorkflowResponse(
+        id=workflow_data["id"],
+        name=workflow_data["name"],
+        description=workflow_data["description"],
+        status=workflow_data["status"],
+        nodes=nodes,
+        edges=edges,
+        created_at=workflow_data["created_at"],
+        updated_at=workflow_data["updated_at"],
+    )
 
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
@@ -58,8 +79,8 @@ async def create_workflow(request: WorkflowCreateRequest) -> WorkflowResponse:
         "name": request.name,
         "description": request.description,
         "status": WorkflowStatus.CREATED,
-        "nodes": [n.model_dump() for n in request.nodes],
-        "edges": [e.model_dump() for e in request.edges],
+        "nodes": list(request.nodes),
+        "edges": list(request.edges),
         "project_id": request.project_id,
         "created_at": now,
         "updated_at": now,
@@ -88,7 +109,7 @@ async def list_workflows(
     if status_filter is not None:
         results = [w for w in results if w["status"] == status_filter]
 
-    return [WorkflowResponse(**w) for w in results]
+    return [_build_workflow_response(w) for w in results]
 
 
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
@@ -110,7 +131,7 @@ async def get_workflow(workflow_id: str) -> WorkflowResponse:
             detail=f"Workflow {workflow_id} not found",
         )
 
-    return WorkflowResponse(**_workflows[workflow_id])
+    return _build_workflow_response(_workflows[workflow_id])
 
 
 @router.post("/{workflow_id}/execute", response_model=WorkflowExecutionResponse)

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import { useAuthStore } from '@/stores/auth-store';
 import { useAuth } from '@/lib/hooks/use-auth';
 
@@ -56,15 +57,27 @@ export function UserMenu() {
 
           {/* Menu items */}
           <div className="py-1">
-            <button className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-surface-2 transition-colors">
-              Profile Settings
-            </button>
-            <button className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-surface-2 transition-colors">
-              API Keys
-            </button>
-            <button className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-surface-2 transition-colors">
-              Preferences
-            </button>
+            <Link
+              href="/dashboard/settings"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 text-sm text-zinc-300 hover:bg-surface-2 transition-colors"
+            >
+              个人设置
+            </Link>
+            <Link
+              href="/dashboard/settings"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 text-sm text-zinc-300 hover:bg-surface-2 transition-colors"
+            >
+              API 密钥
+            </Link>
+            <Link
+              href="/dashboard/settings"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 text-sm text-zinc-300 hover:bg-surface-2 transition-colors"
+            >
+              偏好设置
+            </Link>
           </div>
 
           <div className="border-t border-surface-3 py-1">
@@ -75,7 +88,7 @@ export function UserMenu() {
               }}
               className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-surface-2 transition-colors"
             >
-              Sign Out
+              退出登录
             </button>
           </div>
         </div>

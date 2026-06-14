@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { use } from 'react';
 import { AgentSelector } from '@/components/agents/agent-selector';
 import { ChatPanel } from '@/components/agents/chat-panel';
@@ -14,13 +14,23 @@ export default function AgentsPage({
   const { id } = use(params);
 
   // Zustand store
-  const agents = useAgentStore((s) => s.agents);
+  const allAgents = useAgentStore((s) => s.agents);
+  const fetchAgents = useAgentStore((s) => s.fetchAgents);
+  const agents = useMemo(
+    () => allAgents.filter((a) => !a.projectId || a.projectId === id),
+    [allAgents, id]
+  );
   const messages = useAgentStore((s) => s.messages);
   const thinkingChains = useAgentStore((s) => s.thinkingChains);
   const isStreaming = useAgentStore((s) => s.isStreaming);
   const currentAgent = useAgentStore((s) => s.currentAgent);
   const selectAgent = useAgentStore((s) => s.selectAgent);
   const sendMessage = useAgentStore((s) => s.sendMessage);
+
+  // Fetch agents for this project on mount
+  useEffect(() => {
+    fetchAgents(id);
+  }, [id, fetchAgents]);
 
   // Local state: null = "all agents" view
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
@@ -8,6 +8,8 @@ import { useAuth } from '@/lib/hooks/use-auth';
 import { useWebSocket } from '@/lib/hooks/use-websocket';
 import { ToastProvider } from '@/components/ui/toast';
 import { Spinner } from '@/components/ui/spinner';
+import { useProjectStore } from '@/stores/project-store';
+import { useAuthStore } from '@/stores/auth-store';
 
 // Extract projectId from pathname like /dashboard/projects/{id}/...
 function extractProjectId(pathname: string): string | undefined {
@@ -31,7 +33,9 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { isAuthenticated } = useAuth();
-  const [hydrated, setHydrated] = useState(false);
+  const fetchProjects = useProjectStore((s) => s.fetchProjects);
+  const fetchCurrentUser = useAuthStore((s) => s.fetchCurrentUser);
+  const hasRehydrated = useAuthStore((s) => s.hasRehydrated);
 
   // Extract projectId from URL path like /dashboard/projects/{projectId}/...
   const projectId = extractProjectId(pathname);
@@ -39,21 +43,24 @@ export default function DashboardLayout({
   // Connect to WebSocket for real-time updates
   useWebSocket(projectId);
 
-  // Wait for Zustand persist hydration to complete
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
   // Client-side auth guard: redirect to login if not authenticated
   // Only run after hydration to avoid flash redirect
   useEffect(() => {
-    if (hydrated && !isAuthenticated) {
+    if (hasRehydrated && !isAuthenticated) {
       router.replace('/auth/login');
     }
-  }, [hydrated, isAuthenticated, router]);
+  }, [hasRehydrated, isAuthenticated, router]);
+
+  // Fetch initial data after auth is confirmed
+  useEffect(() => {
+    if (hasRehydrated && isAuthenticated) {
+      fetchCurrentUser();
+      fetchProjects();
+    }
+  }, [hasRehydrated, isAuthenticated, fetchCurrentUser, fetchProjects]);
 
   // Show loading while hydrating
-  if (!hydrated) {
+  if (!hasRehydrated) {
     return (
       <div className="flex h-screen items-center justify-center bg-surface-0">
         <Spinner size="lg" />

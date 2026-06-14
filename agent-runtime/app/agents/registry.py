@@ -1,6 +1,7 @@
 """Agent registry for managing all agent instances."""
 
 import logging
+import uuid
 from typing import Any
 
 from app.agents.base import BaseAgent
@@ -37,6 +38,7 @@ class AgentRegistry:
     def __init__(self) -> None:
         """Initialize an empty agent registry."""
         self._agents: dict[str, BaseAgent] = {}
+        self._agent_ids: dict[str, str] = {}  # name -> uuid mapping
 
     def create(
         self,
@@ -83,6 +85,7 @@ class AgentRegistry:
             agent._inject_default_tools()
 
         self._agents[name] = agent
+        self._agent_ids[name] = str(uuid.uuid4())
         logger.info(
             "Registered agent '%s' of type %s with tools: %s",
             name,
@@ -142,7 +145,33 @@ class AgentRegistry:
         if name not in self._agents:
             raise KeyError(f"Agent '{name}' not found in registry")
         del self._agents[name]
+        self._agent_ids.pop(name, None)
         logger.info("Unregistered agent '%s'", name)
+
+    def get_id(self, name: str) -> str:
+        """Get the UUID of an agent by name.
+
+        Args:
+            name: The unique name of the agent.
+
+        Returns:
+            The UUID string, or the name itself if no UUID is mapped.
+        """
+        return self._agent_ids.get(name, name)
+
+    def get_by_id(self, agent_id: str) -> BaseAgent | None:
+        """Retrieve an agent by its UUID.
+
+        Args:
+            agent_id: The UUID of the agent.
+
+        Returns:
+            The agent instance, or None if not found.
+        """
+        for name, id_ in self._agent_ids.items():
+            if id_ == agent_id:
+                return self._agents.get(name)
+        return None
 
     def get_state(self, name: str) -> dict[str, Any]:
         """Get the state of a specific agent.
