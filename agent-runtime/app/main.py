@@ -1,4 +1,4 @@
-﻿"""FastAPI application entry point with route registration, middleware, and lifecycle events."""
+﻿﻿﻿﻿"""FastAPI application entry point with route registration, middleware, and lifecycle events."""
 
 import logging
 from contextlib import asynccontextmanager

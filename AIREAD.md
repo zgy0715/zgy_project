@@ -1,4 +1,4 @@
-﻿# AIREAD.md — DeepAgent AI 开发指南
+﻿﻿# AIREAD.md — DeepAgent AI 开发指南
 
 > 本文件为 AI 辅助开发提供项目全景视图，确保 AI 理解项目架构、约定和当前状态。
 

@@ -1,4 +1,4 @@
-﻿<div align="center">
+﻿﻿<div align="center">
 
 <img src="https://img.shields.io/badge/DeepAgent-v0.2.1-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
 
