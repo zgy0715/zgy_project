@@ -1,4 +1,4 @@
-"""FastAPI application entry point with route registration, middleware, and lifecycle events."""
+﻿"""FastAPI application entry point with route registration, middleware, and lifecycle events."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.middleware.auth import InternalAuthMiddleware
 from app.api.middleware.error_handler import register_error_handlers
 from app.api.middleware.request_logger import RequestLoggerMiddleware
 from app.api.routes import agents, documents, health, search, workflows
@@ -39,6 +40,14 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     logger.info("Starting %s v%s", settings.app_name, settings.app_version)
+
+    # If internal API key is not set, warn in startup
+    if not settings.security.internal_api_key:
+        logger.warning(
+            "SECURITY_INTERNAL_API_KEY is not configured. "
+            "Set this environment variable to a secure random string and "
+            "configure it identically in the API Gateway for production."
+        )
 
     # Startup: initialize connections and resources
 
@@ -143,7 +152,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # Register CORS middleware
+    # Register CORS middleware (applied before auth to allow preflight)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -151,6 +160,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Register internal auth middleware
+    app.add_middleware(InternalAuthMiddleware)
 
     # Register custom middleware
     app.add_middleware(RequestLoggerMiddleware)

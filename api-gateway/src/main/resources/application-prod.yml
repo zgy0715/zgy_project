@@ -1,4 +1,4 @@
-# Production environment configuration
+﻿# Production environment configuration
 spring:
   # PostgreSQL - production
   datasource:
@@ -56,6 +56,15 @@ grpc:
       host: ${GRPC_AGENT_HOST}
       port: ${GRPC_AGENT_PORT:50051}
       enable-keep-alive: true
+
+# Agent Runtime - production (internal API key required)
+agent-runtime:
+  url: ${AGENT_RUNTIME_URL}
+  internal-api-key: ${AGENT_RUNTIME_INTERNAL_API_KEY}
+
+# Rate Limiting - enforced in production
+rate-limit:
+  enabled: true
 
 # Logging - minimal in production
 logging:

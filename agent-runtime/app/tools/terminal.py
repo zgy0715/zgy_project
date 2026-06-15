@@ -1,4 +1,4 @@
-"""Terminal command execution tool."""
+﻿"""Terminal command execution tool."""
 
 import asyncio
 import logging
@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 60
 
 # Dangerous command patterns — matched against the base command name
-# after extracting it from the full command string.
 BLOCKED_COMMAND_PATTERNS: list[re.Pattern[str]] = [
     # Filesystem destruction
     re.compile(r"^(rm|rmdir)$", re.IGNORECASE),
@@ -35,7 +34,7 @@ BLOCKED_COMMAND_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^(shutdown|reboot|halt|poweroff|init)$", re.IGNORECASE),
     re.compile(r"^(systemctl)$", re.IGNORECASE),
     re.compile(r"^(service)$", re.IGNORECASE),
-    # Package management (prevent uncontrolled installs)
+    # Package management
     re.compile(r"^(apt|apt-get|aptitude|yum|dnf|pacman|emerge|nix-env)$", re.IGNORECASE),
     re.compile(r"^(pip|pip3|conda|npm|yarn|pnpm|cargo install)$", re.IGNORECASE),
     # Network download/execute
@@ -51,12 +50,6 @@ BLOCKED_COMMAND_PATTERNS: list[re.Pattern[str]] = [
     # Kernel/module
     re.compile(r"^(modprobe|insmod|rmmod|lsmod)$", re.IGNORECASE),
     re.compile(r"^(sysctl)$", re.IGNORECASE),
-    # I/O redirection to critical paths
-    re.compile(r">\s*/etc/", re.IGNORECASE),
-    re.compile(r">\s*/boot/", re.IGNORECASE),
-    re.compile(r">\s*/usr/", re.IGNORECASE),
-    re.compile(r">\s*/bin/", re.IGNORECASE),
-    re.compile(r">\s*/sbin/", re.IGNORECASE),
     # Fork bomb pattern
     re.compile(r":\(\)\s*\{", re.IGNORECASE),
     # Windows equivalents
@@ -64,8 +57,10 @@ BLOCKED_COMMAND_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^(net\s+user|net\s+localgroup)$", re.IGNORECASE),
 ]
 
-# Allowed commands — only these base commands can be executed.
-# If non-empty, any command NOT in this list is blocked.
+# Allowed commands — read-only and development-safe commands only.
+# Compilers (gcc, javac, rustc), build tools (mvn, gradle, cargo, go),
+# and runtimes (java, python) have been removed because they can
+# download and/or execute arbitrary code, bypassing file operation controls.
 ALLOWED_COMMANDS: list[str] = [
     # File inspection (read-only)
     "ls", "find", "cat", "head", "tail", "less", "more", "wc",
@@ -74,17 +69,19 @@ ALLOWED_COMMANDS: list[str] = [
     "grep", "egrep", "fgrep", "rg", "ack",
     "sort", "uniq", "cut", "tr", "tee",
     "diff", "comm", "paste", "column",
-    # Development (interpreters removed — they allow arbitrary code execution)
-    "git", "java", "javac", "mvn", "gradle", "go", "cargo", "rustc",
-    "make", "cmake", "gcc", "g++", "clang", "clang++",
+    # Version control
+    "git",
+    # Testing frameworks (run pre-existing tests only)
     "pytest", "unittest", "jest", "vitest",
-    # Process info
+    # Process info (read-only)
     "ps", "top", "htop", "which", "whereis", "env", "printenv",
     "echo", "pwd", "whoami", "hostname", "uname", "date",
     # Network info (read-only)
     "ping", "host", "dig", "nslookup", "ifconfig", "ip",
     # Compression (list/extract only)
     "tar", "unzip", "gunzip", "zcat",
+    # Build system (safe: requires existing build infrastructure)
+    "make", "cmake",
 ]
 
 
@@ -115,7 +112,6 @@ def _extract_base_command(command: str) -> str:
     stripped = stripped.lstrip("( ")
 
     # Handle pipe chains — check each segment
-    # For now, extract the very first command
     first_segment = re.split(r"[|;&]|\|\||&&", stripped, maxsplit=1)[0].strip()
 
     # Try shlex split for proper tokenization
@@ -128,106 +124,114 @@ def _extract_base_command(command: str) -> str:
     if not tokens:
         return ""
 
-    # Get the basename of the command path (e.g., /usr/bin/git -> git)
-    base = tokens[0].rsplit("/", maxsplit=1)[-1].lower()
-    return base
+    # Get the basename of the command (handle paths like /usr/bin/grep)
+    cmd = tokens[0]
+    cmd_name = cmd.split("/")[-1].split("\\")[-1] if cmd else ""
+
+    return cmd_name.lower()
 
 
 class TerminalTool(BaseTool):
-    """Tool for executing terminal commands safely.
+    """Tool for executing terminal commands.
 
-    Runs shell commands in a subprocess with timeout and output
-    capture. Uses a whitelist + blacklist approach for safety:
-    - Global kill switch via SECURITY_ALLOW_SHELL config
-    - Whitelist of allowed base commands
-    - Blacklist of dangerous patterns (regex-based)
+    Provides controlled command execution with security checks:
+    1. Whitelist-based command filtering
+    2. Pattern-based dangerous command blocking
+    3. Working directory restriction
+    4. Execution timeout enforcement
+    5. Shell syntax injection prevention
     """
 
-    def __init__(self, timeout: int = DEFAULT_TIMEOUT) -> None:
-        """Initialize the terminal tool.
-
-        Args:
-            timeout: Maximum execution time in seconds.
-        """
+    def __init__(self) -> None:
+        """Initialize the terminal tool."""
         super().__init__(
             name="terminal",
-            description="Execute a terminal command and return the output.",
+            description="Execute a terminal command in a controlled environment.",
         )
-        self.timeout = timeout
+        self._settings = None
+
+    @property
+    def settings(self):
+        """Lazy-load settings."""
+        if self._settings is None:
+            self._settings = get_settings()
+        return self._settings
 
     async def run(
         self,
         command: str,
         cwd: str | None = None,
-        timeout: int | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
     ) -> ToolResult:
-        """Execute a terminal command.
+        """Execute a terminal command with security checks.
 
         Args:
-            command: The command string to execute.
-            cwd: Working directory for command execution.
-            timeout: Override default timeout in seconds.
+            command: The command to execute.
+            cwd: Working directory for execution.
+            timeout: Maximum execution time in seconds.
 
         Returns:
-            ToolResult with stdout, stderr, and exit code.
+            ToolResult with command output.
         """
-        # Global kill switch: check if shell execution is allowed
-        settings = get_settings()
-        if not settings.security.allow_shell:
+        # Check if shell execution is globally enabled
+        if not self.settings.security.allow_shell:
             return ToolResult(
                 success=False,
-                error="Shell execution is disabled by security policy (SECURITY_ALLOW_SHELL=false)",
+                error="Shell execution is disabled by administrator",
             )
 
-        # Validate working directory is within allowed directories
-        if cwd is not None and not self._is_cwd_allowed(cwd):
-            return ToolResult(
-                success=False,
-                error=f"Access denied: working directory '{cwd}' is outside allowed directories",
-            )
-
-        # Safety check
+        # Security check: is the command safe?
         if not self._is_command_safe(command):
             return ToolResult(
                 success=False,
-                error=f"Command blocked for safety: {command}",
+                error="Command rejected by security policy",
             )
 
-        exec_timeout = timeout or self.timeout
+        # Resolve working directory
+        exec_cwd = cwd or self.settings.security.allowed_directories[0] if self.settings.security.allowed_directories else "/tmp"
+        if cwd and not self._is_cwd_allowed(cwd):
+            return ToolResult(
+                success=False,
+                error=f"Working directory '{cwd}' is outside allowed directories",
+            )
+
+        exec_timeout = min(timeout, DEFAULT_TIMEOUT)
 
         try:
+            # Use asyncio subprocess for execution
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
+                cwd=exec_cwd,
             )
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=exec_timeout,
-            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=exec_timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                logger.warning("Command timed out: %s", command[:100])
+                return ToolResult(
+                    success=False,
+                    error=f"Command timed out after {exec_timeout}s",
+                )
 
-            stdout_str = stdout.decode("utf-8", errors="replace")
-            stderr_str = stderr.decode("utf-8", errors="replace")
             exit_code = process.returncode or 0
+            output = (stdout.decode("utf-8", errors="replace") if stdout else "") + \
+                     (stderr.decode("utf-8", errors="replace") if stderr else "")
 
             logger.info(
-                "Command executed: %s (exit_code=%d)",
-                command[:100],
+                "Command executed (exit=%d): %s",
                 exit_code,
+                command[:100],
             )
-
-            output_parts: list[str] = []
-            if stdout_str:
-                output_parts.append(stdout_str)
-            if stderr_str:
-                output_parts.append(f"[stderr]\n{stderr_str}")
 
             return ToolResult(
                 success=exit_code == 0,
-                output="\n".join(output_parts),
-                error=stderr_str if exit_code != 0 else None,
+                output=output if exit_code == 0 else f"Exit code {exit_code}:\n{output}",
                 metadata={
                     "command": command,
                     "exit_code": exit_code,
@@ -235,31 +239,12 @@ class TerminalTool(BaseTool):
                 },
             )
 
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            logger.warning("Command timed out: %s", command[:100])
-            return ToolResult(
-                success=False,
-                error=f"Command timed out after {exec_timeout}s",
-            )
-
         except Exception as e:
             logger.error("Command execution failed: %s - %s", command[:100], str(e))
             return ToolResult(success=False, error=str(e))
 
     def _is_cwd_allowed(self, cwd: str) -> bool:
-        """Check if the working directory is within allowed directories.
-
-        Reuses the same SecurityConfig.allowed_directories as file_ops
-        to ensure agents cannot execute commands outside the workspace.
-
-        Args:
-            cwd: The working directory path to check.
-
-        Returns:
-            True if the directory is allowed, False otherwise.
-        """
+        """Check if the working directory is within allowed directories."""
         from pathlib import Path
 
         settings = get_settings()

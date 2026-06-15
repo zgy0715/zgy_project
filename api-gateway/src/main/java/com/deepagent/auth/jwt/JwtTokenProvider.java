@@ -1,4 +1,4 @@
-package com.deepagent.auth.jwt;
+﻿package com.deepagent.auth.jwt;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -19,60 +19,51 @@ import jakarta.annotation.PostConstruct;
 /**
  * JWT token provider for generating and validating JSON Web Tokens.
  *
- * <p>Handles the complete lifecycle of JWT tokens:</p>
- * <ul>
- *   <li>Access token generation with configurable expiration</li>
- *   <li>Refresh token generation with longer expiration</li>
- *   <li>Token validation and claims extraction</li>
- *   <li>Token revocation support via JTI (JWT ID)</li>
- * </ul>
- *
- * <p>Uses HMAC-SHA256 signing algorithm with a configurable secret key.</p>
+ * <p>Handles the complete lifecycle of JWT tokens with HMAC-SHA256 signing.
+ * Enforces a minimum 256-bit (32-character) secret key for production safety.</p>
  */
 @Slf4j
 @Component
 public class JwtTokenProvider {
 
+    // Minimum key length for HMAC-SHA256 in bytes (256-bit)
+    private static final int MIN_SECRET_LENGTH = 32;
+
     private SecretKey signingKey;
     private final long accessTokenExpirationMs;
     private final long refreshTokenExpirationMs;
 
-    @Value("${jwt.secret}")
+    @Value("")
     private String secret;
 
-    /**
-     * Constructs the JwtTokenProvider with configuration values.
-     *
-     * @param accessTokenExpirationMs   access token expiration in milliseconds
-     * @param refreshTokenExpirationMs  refresh token expiration in milliseconds
-     */
     public JwtTokenProvider(
-            @Value("${jwt.access-token-expiration:3600000}") long accessTokenExpirationMs,
-            @Value("${jwt.refresh-token-expiration:86400000}") long refreshTokenExpirationMs) {
+            @Value("") long accessTokenExpirationMs,
+            @Value("") long refreshTokenExpirationMs) {
         this.accessTokenExpirationMs = accessTokenExpirationMs;
         this.refreshTokenExpirationMs = refreshTokenExpirationMs;
     }
 
-    /**
-     * Validates that the JWT secret is configured and initializes the signing key.
-     *
-     * @throws IllegalStateException if the secret is not set
-     */
     @PostConstruct
     public void init() {
         if (secret == null || secret.isBlank()) {
             throw new IllegalStateException("JWT_SECRET environment variable must be set");
         }
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < MIN_SECRET_LENGTH) {
+            throw new IllegalStateException(
+                "JWT secret must be at least " + MIN_SECRET_LENGTH + " characters long " +
+                "(current: " + keyBytes.length + "). Use a strong, randomly generated key."
+            );
+        }
+        // Warn if the secret looks like a default/dev value
+        String lowerSecret = secret.toLowerCase();
+        if (lowerSecret.contains("dev-only") || lowerSecret.contains("change-in-production")) {
+            log.warn("JWT secret appears to be a development/default value. " +
+                     "Generate a strong random secret for production use.");
+        }
         signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    /**
-     * Generates a JWT access token for the given username and role.
-     *
-     * @param username the subject username
-     * @param role     the user's role
-     * @return the signed JWT access token string
-     */
     public String generateAccessToken(String username, String role) {
         var now = Instant.now();
         return Jwts.builder()
@@ -86,12 +77,6 @@ public class JwtTokenProvider {
                 .compact();
     }
 
-    /**
-     * Generates a JWT refresh token for the given username.
-     *
-     * @param username the subject username
-     * @return the signed JWT refresh token string
-     */
     public String generateRefreshToken(String username) {
         var now = Instant.now();
         return Jwts.builder()
@@ -104,43 +89,18 @@ public class JwtTokenProvider {
                 .compact();
     }
 
-    /**
-     * Extracts the username (subject) from a JWT token.
-     *
-     * @param token the JWT token
-     * @return the username stored in the token subject
-     */
     public String getUsernameFromToken(String token) {
         return parseClaims(token).getSubject();
     }
 
-    /**
-     * Extracts the user role from a JWT access token.
-     *
-     * @param token the JWT access token
-     * @return the role claim value
-     */
     public String getRoleFromToken(String token) {
         return parseClaims(token).get("role", String.class);
     }
 
-    /**
-     * Extracts the JWT ID (JTI) from a token.
-     *
-     * @param token the JWT token
-     * @return the unique token identifier
-     */
     public String getTokenId(String token) {
         return parseClaims(token).getId();
     }
 
-    /**
-     * Extracts the JWT ID (JTI) from a token.
-     * Alias for {@link #getTokenId(String)}.
-     *
-     * @param token the JWT token
-     * @return the unique token identifier, or null if extraction fails
-     */
     public String getJtiFromToken(String token) {
         try {
             return parseClaims(token).getId();
@@ -149,12 +109,6 @@ public class JwtTokenProvider {
         }
     }
 
-    /**
-     * Validates a JWT access token.
-     *
-     * @param token the JWT token to validate
-     * @return true if the token is valid and is an access token
-     */
     public boolean validateAccessToken(String token) {
         try {
             var claims = parseClaims(token);
@@ -165,12 +119,6 @@ public class JwtTokenProvider {
         }
     }
 
-    /**
-     * Validates a JWT refresh token.
-     *
-     * @param token the JWT refresh token to validate
-     * @return true if the token is valid and is a refresh token
-     */
     public boolean validateRefreshToken(String token) {
         try {
             var claims = parseClaims(token);
@@ -181,31 +129,14 @@ public class JwtTokenProvider {
         }
     }
 
-    /**
-     * Gets the access token expiration time in seconds.
-     *
-     * @return expiration time in seconds
-     */
     public long getAccessTokenExpirationSeconds() {
         return accessTokenExpirationMs / 1000;
     }
 
-    /**
-     * Gets the refresh token expiration time in seconds.
-     *
-     * @return expiration time in seconds
-     */
     public long getRefreshTokenExpirationSeconds() {
         return refreshTokenExpirationMs / 1000;
     }
 
-    /**
-     * Parses and returns the claims from a JWT token.
-     *
-     * @param token the JWT token
-     * @return the parsed claims
-     * @throws JwtException if the token is invalid or expired
-     */
     private Claims parseClaims(String token) {
         return Jwts.parser()
                 .verifyWith(signingKey)

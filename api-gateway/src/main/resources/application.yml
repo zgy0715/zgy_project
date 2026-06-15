@@ -1,4 +1,4 @@
-server:
+﻿server:
   port: 8080
   servlet:
     context-path: /
@@ -76,7 +76,7 @@ spring:
 
 # JWT Configuration
 jwt:
-  secret: ${JWT_SECRET:}  # 必须通过环境变量设置，无默认值
+  secret: ${JWT_SECRET:}  # 必须通过环境变量设置，至少32字符
   access-token-expiration: ${JWT_ACCESS_TOKEN_EXPIRATION:3600000}
   refresh-token-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION:86400000}
 
@@ -97,8 +97,13 @@ grpc:
 # Python Agent Runtime Configuration
 agent-runtime:
   url: ${AGENT_RUNTIME_URL:http://localhost:8000}
+  internal-api-key: ${AGENT_RUNTIME_INTERNAL_API_KEY:}
 
-# Actuator
+# Rate Limiting
+rate-limit:
+  enabled: ${RATE_LIMIT_ENABLED:true}
+
+# Actuator (restricted to admin role in SecurityConfig)
 management:
   endpoints:
     web:

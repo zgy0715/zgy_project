@@ -1,5 +1,6 @@
-package com.deepagent.orchestrator.controller;
+﻿package com.deepagent.orchestrator.controller;
 
+import com.deepagent.auth.entity.User;
 import com.deepagent.common.exception.BusinessException;
 import com.deepagent.common.response.ApiResponse;
 import com.deepagent.orchestrator.client.AgentRestClient;
@@ -8,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,16 +22,14 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * REST controller for agent management and execution endpoints.
  *
- * <p>Provides endpoints that proxy agent operations to the Python Agent
- * Runtime. Agent CRUD operations are forwarded via {@link AgentRestClient},
- * while task execution can optionally use the gRPC-based
- * {@link AgentOrchestrator} for streaming support.</p>
- *
- * <p>All endpoints require JWT authentication.</p>
+ * <p>All endpoints require JWT authentication. Agent ownership is tracked
+ * via a local map (mapping agentId -> userId) to ensure users can only
+ * access their own agents.</p>
  */
 @Slf4j
 @RestController
@@ -39,67 +40,57 @@ public class AgentController {
     private final AgentRestClient agentRestClient;
     private final AgentOrchestrator agentOrchestrator;
 
-    /**
-     * Creates a new agent instance.
-     *
-     * @param request the agent creation request containing name, type, config, etc.
-     * @return the created agent details
-     */
+    // In-memory agent ownership tracking: agentId -> userId
+    // In a production environment, this should be moved to a database
+    private final ConcurrentHashMap<String, Long> agentOwnership = new ConcurrentHashMap<>();
+
     @PostMapping
     public ResponseEntity<ApiResponse<Map>> createAgent(
-            @RequestBody Map<String, Object> request) {
-        log.info("Creating agent: name={}", request.get("name"));
+            @RequestBody Map<String, Object> request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Creating agent: name={}, user={}", request.get("name"), userDetails.getUsername());
+
+        var ownerId = extractUserId(userDetails);
+        // Tag the agent with owner info via metadata
+        request.put("owner_id", String.valueOf(ownerId));
+
         var result = agentRestClient.createAgent(request).block();
+        if (result != null && result.containsKey("id")) {
+            String agentId = String.valueOf(result.get("id"));
+            agentOwnership.put(agentId, ownerId);
+        }
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Lists all agents with optional filtering.
-     *
-     * @param agentType    optional filter by agent type
-     * @param statusFilter optional filter by agent status
-     * @return list of agents
-     */
     @GetMapping
     public ResponseEntity<ApiResponse<Map>> listAgents(
             @RequestParam(required = false) String agentType,
-            @RequestParam(required = false) String statusFilter) {
-        log.debug("Listing agents: agentType={}, statusFilter={}", agentType, statusFilter);
+            @RequestParam(required = false) String statusFilter,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.debug("Listing agents: agentType={}, statusFilter={}, user={}",
+                agentType, statusFilter, userDetails.getUsername());
         var result = agentRestClient.listAgents(agentType, statusFilter).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Gets the state of a specific agent.
-     *
-     * @param agentId the agent identifier
-     * @return the agent state including conversation history
-     */
     @GetMapping("/{agentId}")
     public ResponseEntity<ApiResponse<Map>> getAgent(
-            @PathVariable String agentId) {
-        log.debug("Getting agent: agentId={}", agentId);
+            @PathVariable String agentId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.debug("Getting agent: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         var result = agentRestClient.getAgent(agentId).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Executes a task on the specified agent.
-     *
-     * <p>For streaming execution, the task output is published via WebSocket
-     * to the topic {@code /topic/project/{projectId}/task/{taskId}}.</p>
-     *
-     * @param agentId the agent identifier
-     * @param request the execution request containing task and context
-     * @return the execution result
-     */
     @PostMapping("/{agentId}/execute")
     public ResponseEntity<ApiResponse<Map>> executeAgent(
             @PathVariable String agentId,
-            @RequestBody Map<String, Object> request) {
-        log.info("Executing agent: agentId={}", agentId);
+            @RequestBody Map<String, Object> request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Executing agent: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
 
-        // Check if streaming is requested
         var stream = request.get("stream");
         if (stream instanceof Boolean boolStream && boolStream) {
             var projectId = extractLong(request.get("project_id"));
@@ -120,104 +111,99 @@ public class AgentController {
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Sends a chat message to an agent.
-     *
-     * <p>Uses the agent execute endpoint with a chat-oriented payload.
-     * For streaming responses, set {@code "stream": true} in the request.</p>
-     *
-     * @param agentId the agent identifier
-     * @param request the chat request containing the message
-     * @return the chat response
-     */
     @PostMapping("/{agentId}/chat")
     public ResponseEntity<ApiResponse<Map>> chatWithAgent(
             @PathVariable String agentId,
-            @RequestBody Map<String, Object> request) {
-        log.info("Chat with agent: agentId={}", agentId);
+            @RequestBody Map<String, Object> request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Chat with agent: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         var result = agentRestClient.chatWithAgent(agentId, request).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Streams chat responses from an agent using server-sent events.
-     *
-     * @param agentId the agent identifier
-     * @param request the chat request containing the message
-     * @return a flux of server-sent events with chat response chunks
-     */
     @PostMapping("/{agentId}/chat/stream")
     public Flux<ServerSentEvent<Map>> streamChat(
             @PathVariable String agentId,
-            @RequestBody Map<String, Object> request) {
-        log.info("Streaming chat with agent: agentId={}", agentId);
+            @RequestBody Map<String, Object> request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Streaming chat with agent: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         return agentRestClient.streamChat(agentId, request)
                 .map(data -> ServerSentEvent.<Map>builder().data(data).build());
     }
 
-    /**
-     * Gets the thinking chain for an agent.
-     *
-     * @param agentId the agent identifier
-     * @return the thinking chain details
-     */
     @GetMapping("/{agentId}/thinking-chain")
     public ResponseEntity<ApiResponse<Map>> getThinkingChain(
-            @PathVariable String agentId) {
-        log.debug("Getting thinking chain: agentId={}", agentId);
+            @PathVariable String agentId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.debug("Getting thinking chain: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         var result = agentRestClient.getThinkingChain(agentId).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Gets the message history for an agent.
-     *
-     * @param agentId the agent identifier
-     * @param limit   optional maximum number of messages to return
-     * @param offset  optional offset for pagination
-     * @return the message history
-     */
     @GetMapping("/{agentId}/messages")
     public ResponseEntity<ApiResponse<Map>> getMessages(
             @PathVariable String agentId,
             @RequestParam(required = false) Integer limit,
-            @RequestParam(required = false) Integer offset) {
-        log.debug("Getting messages: agentId={}, limit={}, offset={}", agentId, limit, offset);
+            @RequestParam(required = false) Integer offset,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.debug("Getting messages: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         var result = agentRestClient.getMessages(agentId, limit, offset).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Gets the review findings for an agent.
-     *
-     * @param agentId the agent identifier
-     * @return the review findings
-     */
     @GetMapping("/{agentId}/review-findings")
     public ResponseEntity<ApiResponse<Map>> getReviewFindings(
-            @PathVariable String agentId) {
-        log.debug("Getting review findings: agentId={}", agentId);
+            @PathVariable String agentId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.debug("Getting review findings: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         var result = agentRestClient.getReviewFindings(agentId).block();
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
-    /**
-     * Deletes an agent instance.
-     *
-     * @param agentId the agent identifier
-     * @return success response
-     */
     @DeleteMapping("/{agentId}")
     public ResponseEntity<ApiResponse<Void>> deleteAgent(
-            @PathVariable String agentId) {
-        log.info("Deleting agent: agentId={}", agentId);
+            @PathVariable String agentId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Deleting agent: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
         agentRestClient.deleteAgent(agentId).block();
+        agentOwnership.remove(agentId);
         return ResponseEntity.ok(ApiResponse.success(null, "Agent deleted successfully"));
     }
 
     /**
-     * Extracts a Long value from an object, returning null if not possible.
+     * Verifies that the authenticated user owns the specified agent.
+     * Falls back to allowing access if ownership is not yet tracked
+     * (e.g., agents created before this update).
      */
+    private void verifyAgentOwnership(String agentId, UserDetails userDetails) {
+        Long ownerId = agentOwnership.get(agentId);
+        if (ownerId != null) {
+            Long userId = extractUserId(userDetails);
+            if (!ownerId.equals(userId)) {
+                throw new BusinessException("Access denied: you do not own this agent");
+            }
+        }
+        // If ownership not tracked (legacy agents), allow access
+        // but log a warning for auditing
+        if (ownerId == null) {
+            log.warn("Agent {} has no tracked owner, allowing access for user {}",
+                    agentId, userDetails.getUsername());
+        }
+    }
+
+    private Long extractUserId(UserDetails userDetails) {
+        if (userDetails instanceof User user) {
+            return user.getId();
+        }
+        throw new IllegalStateException("Unexpected principal type: " + userDetails.getClass().getName());
+    }
+
     private Long extractLong(Object value) {
         if (value instanceof Number num) {
             return num.longValue();

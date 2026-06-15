@@ -1,4 +1,4 @@
-#include <pybind11/pybind11.h>
+﻿#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 
@@ -66,6 +66,9 @@ PYBIND11_MODULE(vector_engine, m) {
     // ── HNSWIndex ────────────────────────────────────────────────────────
     py::class_<HNSWIndex>(m, "HNSWIndex")
         .def(py::init<const IndexConfig&>(), py::arg("config"))
+        .def(py::init<const std::string&, const IndexConfig&>(),
+             py::arg("path"), py::arg("config"),
+             "Load an index from a saved file with the given configuration")
         .def("build", [](HNSWIndex& idx, const std::vector<float>& data,
                          std::size_t num_vectors, int dim) {
             idx.build(data.data(), num_vectors, dim);
@@ -95,25 +98,28 @@ PYBIND11_MODULE(vector_engine, m) {
 
     // ── CodeToken ────────────────────────────────────────────────────────
     py::class_<CodeToken>(m, "CodeToken")
-        .def_readonly("text",       &CodeToken::text)
-        .def_readonly("language",   &CodeToken::language)
-        .def_readonly("start_line", &CodeToken::start_line)
-        .def_readonly("end_line",   &CodeToken::end_line)
-        .def_readonly("name",       &CodeToken::name)
+        .def_readonly("text",  &CodeToken::text)
+        .def_readonly("type",  &CodeToken::type)
         .def("__repr__", [](const CodeToken& t) {
-            return "CodeToken(name='" + t.name + "', lines=" +
-                   std::to_string(t.start_line) + "-" +
-                   std::to_string(t.end_line) + ")";
+            return "CodeToken(text=" + t.text + ", type=" + t.type + ")";
         });
+
+    // ── Tokenizer ────────────────────────────────────────────────────────
+    py::class_<Tokenizer>(m, "Tokenizer")
+        .def(py::init<>())
+        .def("tokenize", &Tokenizer::tokenize, py::arg("code"), py::arg("language"))
+        .def_static("detect_language", &Tokenizer::detect_language, py::arg("filename"));
 
     // ── EmbedderConfig ───────────────────────────────────────────────────
     py::class_<EmbedderConfig>(m, "EmbedderConfig")
         .def(py::init<>())
         .def_readwrite("backend",       &EmbedderConfig::backend)
-        .def_readwrite("dim",           &EmbedderConfig::dim)
         .def_readwrite("model_path",    &EmbedderConfig::model_path)
-        .def_readwrite("api_endpoint",  &EmbedderConfig::api_endpoint)
-        .def_readwrite("split_strategy",&EmbedderConfig::split_strategy);
+        .def_readwrite("api_url",       &EmbedderConfig::api_url)
+        .def_readwrite("api_key",       &EmbedderConfig::api_key)
+        .def_readwrite("dim",           &EmbedderConfig::dim)
+        .def_readwrite("max_batch_size", &EmbedderConfig::max_batch_size)
+        .def_readwrite("pooling_strategy", &EmbedderConfig::pooling_strategy);
 
     // ── CodeEmbedder ─────────────────────────────────────────────────────
     py::class_<CodeEmbedder>(m, "CodeEmbedder")

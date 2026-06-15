@@ -1,4 +1,4 @@
-"""Application configuration management using Pydantic BaseSettings."""
+﻿"""Application configuration management using Pydantic BaseSettings."""
 
 import os
 from functools import lru_cache
@@ -81,6 +81,11 @@ class SecurityConfig(BaseSettings):
         ge=1,
         description="Maximum file size (MB) that agents can read or write.",
     )
+    # Shared secret between API Gateway and Agent Runtime for internal auth
+    internal_api_key: str = Field(
+        default="",
+        description="API key for authenticating requests from the API Gateway.",
+    )
 
 
 class AppConfig(BaseSettings):
@@ -99,7 +104,11 @@ class AppConfig(BaseSettings):
     host: str = "0.0.0.0"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    cors_origins: list[str] = ["*"]
+    # Restrict CORS to the API Gateway origin; change to specific origins in production
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:8080"],
+        description="Allowed CORS origins. Should be the API Gateway URL.",
+    )
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)

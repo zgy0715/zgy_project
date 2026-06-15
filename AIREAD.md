@@ -1,4 +1,4 @@
-# AIREAD.md — DeepAgent AI 开发指南
+﻿# AIREAD.md — DeepAgent AI 开发指南
 
 > 本文件为 AI 辅助开发提供项目全景视图，确保 AI 理解项目架构、约定和当前状态。
 
@@ -8,8 +8,8 @@
 
 **DeepAgent** 是一个基于大语言模型的多智能体协作开发平台。编排 Coder、Reviewer、Tester、Deployer 四个专业化 AI Agent，让它们像真实软件团队一样协同工作。
 
-- **版本**: v0.2.0
-- **状态**: 核心功能已实现，全栈安全加固完成
+- **版本**: v0.2.1
+- **状态**: 核心功能已实现，全栈安全加固完成，安全审计问题已修复
 
 ---
 
@@ -55,6 +55,13 @@ zgy_project/
 - **HTTP**: Axios
 - **图表**: Recharts
 
+### 安全措施
+- JWT Access Token (1h) + Refresh Token (24h) 双令牌
+- Axios 拦截器自动附加 Bearer Token，401 自动刷新
+- Cookie SameSite=Strict，生产环境 Secure 标志
+- 安全响应头: X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- 所有页面需认证（中间件 Cookie 检查 + Route Guard）
+
 ### API 模式
 - **仅支持 API 模式**，已完全移除 mock 模式
 - `API_MODE` 常量固定为 `'api'`
@@ -88,8 +95,8 @@ PaginatedResponse<T> = {
 - 登录/注册后存储到 localStorage + Zustand persist
 - Axios 拦截器自动附加 Bearer Token
 - 401 时自动尝试 Refresh Token 刷新
-- 登出时黑名单 Refresh Token (X-Refresh-Token header)
-- Next.js Middleware 检查 `deepagent_authenticated` cookie
+- 登出时黑名单 Access Token + Refresh Token (Redis)
+- Next.js Middleware 检查 `deepagent_authenticated` cookie (SameSite=Strict)
 
 ### 状态管理 (6 个 Store)
 
@@ -131,6 +138,7 @@ PaginatedResponse<T> = {
 - 订阅: `/topic/project/{projectId}`, `/user/queue/notifications`
 - 发送: `/app/terminal/{projectId}` (终端输入)
 - JWT 认证: 连接时在 STOMP headers 传递 token
+- 安全: 订阅时验证用户认证状态，限制非授权 topic
 
 ---
 
@@ -140,7 +148,7 @@ PaginatedResponse<T> = {
 - `POST /auth/login` — 登录
 - `POST /auth/register` — 注册
 - `POST /auth/refresh` — 刷新令牌 (X-Refresh-Token header)
-- `POST /auth/logout` — 登出 (黑名单 Refresh Token)
+- `POST /auth/logout` — 登出 (黑名单 Access + Refresh Token)
 - `GET /auth/me` — 获取当前用户
 
 ### 项目 (/api/v1/projects)
@@ -156,9 +164,9 @@ PaginatedResponse<T> = {
 
 ### Agent (/api/v1/agents)
 - `GET /agents` — Agent 列表 (?projectId=)
-- `GET /agents/{id}` — Agent 详情
-- `POST /agents` — 创建 Agent
-- `DELETE /agents/{id}` — 删除 Agent
+- `GET /agents/{id}` — Agent 详情 (需所有权验证)
+- `POST /agents` — 创建 Agent (记录 owner)
+- `DELETE /agents/{id}` — 删除 Agent (需所有权验证)
 - `POST /agents/{id}/chat/stream` — SSE 流式对话
 - `GET /agents/{id}/thinking-chain` — 思维链
 - `GET /agents/{id}/messages` — 消息历史
@@ -170,6 +178,38 @@ PaginatedResponse<T> = {
 - `DELETE /workflows/{id}` — 删除工作流
 - `PUT /workflows/{id}` — 保存工作流
 - `POST /workflows/{id}/execute` — 执行工作流
+
+---
+
+## 安全架构
+
+### 认证与授权
+- **JWT HMAC-SHA256**: 强制 32 字符最小密钥长度，拒绝开发默认值
+- **Token 黑名单**: Redis 统一前缀 `jwt:blacklist:`，覆盖 HTTP + WebSocket
+- **Agent 所有权**: API Gateway 层维护 agentId→userId 映射，操作前校验
+- **内部 API 密钥**: Agent Runtime 要求 `X-DeepAgent-Internal-Key` 请求头
+
+### 速率限制 (Rate Limiting)
+- 认证接口: 10 次/分钟/IP
+- 通用 API: 100 次/分钟/用户
+- 支持 Redis（多实例）和内存回退（单实例）
+
+### WebSocket 安全
+- STOMP CONNECT: JWT 认证 + 黑名单检查
+- STOMP SUBSCRIBE: 仅允许 `/topic/project/` 和 `/user/` 前缀
+- 未认证订阅请求被拒绝
+
+### Agent 工具安全
+- **TerminalTool**: 四层防御 (shell 语法过滤 → 命令白名单 → 危险模式匹配 → 路径写入检查)
+- **FileOps**: 路径白名单 `allowed_directories`，文件大小限制 10MB，关闭失败
+- **CoderAgent**: 移除终端代码执行验证，仅通过 LLM 审核代码质量
+
+### 安全配置要求
+| 环境变量 | 要求 | 说明 |
+|---------|------|------|
+| `JWT_SECRET` | ≥32 字符 | HMAC-SHA256 签名密钥 |
+| `INTERNAL_API_KEY` | 推荐 64 字符十六进制 | 内部服务间认证 |
+| `OPENAI_API_KEY` | 有效 API Key | LLM 服务密钥 |
 
 ---
 
@@ -186,9 +226,11 @@ PaginatedResponse<T> = {
 - Zustand store 使用 `create()` + TypeScript 泛型
 - API 调用统一通过 `api-client.ts` 中的方法
 - 错误处理: try/catch + `(error as any)?.response?.data?.message`
+- 所有 Controller 端点需添加 `@AuthenticationPrincipal UserDetails` 参数
 
 ### 环境变量
 - `NEXT_PUBLIC_API_URL` — 后端 API 地址 (默认 http://localhost:8080/api/v1)
+- `NEXT_PUBLIC_WS_URL` — WebSocket 地址 (默认 ws://localhost:8080/ws)
 - 不再使用 `NEXT_PUBLIC_API_MODE` (已移除 mock 模式)
 
 ---
@@ -199,6 +241,7 @@ PaginatedResponse<T> = {
 - `PUT /auth/profile` — 更新用户资料 (Settings 页面暂仅本地更新)
 - `POST /auth/change-password` — 修改密码 (Settings 页面已标记为"开发中")
 - `PUT /agents/{id}` — 更新 Agent 配置 (编辑 Agent 暂仅本地更新)
+- Agent 所有权持久化存储 (当前使用 API Gateway 内存 Map，重启后丢失)
 
 ### 前端待优化
 - Diff 模式的"原始代码"是模拟生成的，非真实版本对比
@@ -209,6 +252,31 @@ PaginatedResponse<T> = {
 
 ## 变更日志
 
+### v0.2.1 - 2026-06-15 — 安全审计修复
+
+#### 🔴 严重漏洞修复
+- JWT Secret 添加 32 字符最小长度校验，拒绝开发默认值
+- 修复 WebSocket Token 黑名单 Key 前缀不一致 (`token:blacklist:` → `jwt:blacklist:`)
+- Agent 控制器添加用户所有权追踪和 `@AuthenticationPrincipal` 验证
+- Agent Runtime 默认 CORS 从 `["*"]` 改为 `["http://localhost:8080"]`
+- docker-compose 移除所有默认密码，使用 `:?` 语法强制要求环境变量
+
+#### 🟠 高危漏洞修复
+- 移除终端工具中的编译器/构建工具白名单 (`gcc`, `javac`, `mvn`, `cargo` 等)
+- CoderAgent 移除终端代码执行验证逻辑
+- Agent Runtime 新增 `InternalAuthMiddleware` 内部 API Key 认证
+- 前端中间件移除开发模式认证绕过，添加安全响应头
+
+#### 🟡 中危问题修复
+- 新增 `RateLimitFilter` — 认证接口 10次/分钟，通用 API 100次/分钟
+- WebSocket 订阅添加目标验证，仅允许 `/topic/project/` 和 `/user/` 前缀
+- Auth Cookie 添加 `SameSite=Strict` 和 `Secure`（生产环境）
+- `WorkflowController` / `SchedulerController` 添加 `@AuthenticationPrincipal`
+- Actuator 和 Swagger 端点改为仅 `ADMIN` 角色可访问
+- HNSW 路径构造函数修复 (`load_from_file()` + 元数据持久化)
+- 所有 API Gateway 到 Agent Runtime 的请求添加内部认证头
+- `.env.example` 添加安全密钥生成指导和安全警告
+
 ### v0.1.2 - 2026-06-14
 
 #### 重大变更: 移除 Mock 模式
@@ -218,25 +286,10 @@ PaginatedResponse<T> = {
 - 登录页移除 Demo Mode 按钮
 
 #### Critical 修复
-- Agent/Workflow 列表页增删改操作改为调用后端 API (原仅修改本地 state)
+- Agent/Workflow 列表页增删改操作改为调用后端 API
 - Code 页面添加 useEffect 自动加载文件树和文件内容
 - Docs 页面添加项目选择和文档加载功能
 - 修复 `user.id` 始终为空字符串 (改为使用 username 作为临时 ID)
 - 移除 Agent/Workflow 创建时硬编码的 `projectId: 'proj-1'`
 
-#### High 修复
-- API 客户端 `agentsApi.list()` 和 `workflowsApi.list()` 新增 `projectId` 参数支持
-- `fetchAgents`/`fetchWorkflows` 传递 `projectId` 参数给 API
-- 项目 Agent 对话页添加 `fetchAgents(projectId)` 调用
-- Dashboard 移除硬编码统计数据 (change/testPassRate/codeLines 估算值)
-- Settings 主题切换修复 system 模式 (检测系统偏好)
-- Settings 修改密码标记为"开发中" (后端 API 未实现)
-- Token refresh 后同步 Zustand store 中的 token
-- Workflow 页面移除硬编码 `workflowId="default"`，改为从 store 获取
-- 项目详情页 workflows 按 projectId 过滤
-- Middleware 添加 `/auth/forgot-password` 到公开路径
-
-#### 代码清理
-- 移除 terminal.tsx 中的 API_MODE 条件判断和 simulateCommand
-- 移除 code-editor.tsx 中的 mock 注释
-- Terminal 本地命令精简为 help/clear/echo/date/whoami
+[完整 v0.1.2 变更日志见 README.md]

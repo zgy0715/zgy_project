@@ -1,6 +1,6 @@
-<div align="center">
+﻿<div align="center">
 
-<img src="https://img.shields.io/badge/DeepAgent-v0.2.0-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
+<img src="https://img.shields.io/badge/DeepAgent-v0.2.1-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
 
 # 🤖 DeepAgent
 
@@ -67,6 +67,7 @@ DeepAgent 是一个由大语言模型驱动的多智能体协作开发平台。�
 | 📦 | **部署配置生成** | 自动生成 Dockerfile 与 CI/CD 配置 |
 | 🧠 | **持久化记忆** | Agent 具备项目级长期记忆，越用越懂你的项目 |
 | 🌐 | **四语言技术栈** | C++ / Python / Java / TypeScript 各展所长 |
+| 🔒 | **全栈安全加固** | JWT 强密钥校验、速率限制、内部服务认证、WebSocket 授权 |
 
 ---
 
@@ -82,377 +83,238 @@ DeepAgent 是一个由大语言模型驱动的多智能体协作开发平台。�
 └───────────────────────────┬──────────────────────────────────┘
                             │ WebSocket / REST API
 ┌───────────────────────────┴──────────────────────────────────┐
-│                API 网关 (Java 21 — Spring Boot 3)              │
+│              API 网关 (Java 21 — Spring Boot 3)               │
 │  ┌────────────┐  ┌────────────┐  ┌────────────────────────┐  │
 │  │  认证鉴权   │  │  DAG 调度器  │  │  Agent 编排引擎        │  │
-│  │  (JWT+RBAC) │  │ (Kahn+VT)  │  │  (gRPC → Python)      │  │
+│  │ (JWT+RBAC) │  │ (Kahn+VT)  │  │  (gRPC → Python)      │  │
+│  │ +限流过滤器 │  │            │  │  +内部服务认证          │  │
 │  └────────────┘  └────────────┘  └────────────────────────┘  │
 └───────────────────────────┬──────────────────────────────────┘
                             │ gRPC / RabbitMQ
 ┌───────────────────────────┴──────────────────────────────────┐
 │              Agent 运行时 (Python 3.11 — FastAPI)              │
-│                                                               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐   │
-│  │  Coder   │  │ Reviewer │  │  Tester  │  │  Deployer  │   │
-│  │  Agent   │  │  Agent   │  │  Agent   │  │   Agent    │   │
-│  └──────────┘  └──────────┘  └──────────┘  └────────────┘   │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │  LangGraph 编排 · 记忆系统 · 工具框架 · Prompt 管理     │  │
-│  └─────────────────────────────────────────────────────────┘  │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────────┐  │
+│  │  Coder     │  │  Reviewer  │  │  向量引擎客户端         │  │
+│  │  Agent     │  │  Agent     │  │  (HTTP/pybind11)       │  │
+│  └────────────┘  └────────────┘  └────────────────────────┘  │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────────┐  │
+│  │  Tester    │  │  Deployer  │  │  Agent 记忆系统         │  │
+│  │  Agent     │  │  Agent     │  │  (短期+长期记忆)        │  │
+│  └────────────┘  └────────────┘  └────────────────────────┘  │
 └───────────────────────────┬──────────────────────────────────┘
                             │ pybind11
 ┌───────────────────────────┴──────────────────────────────────┐
-│            向量引擎 (C++17 — HNSW Index)                       │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  │
-│  │  HNSW 索引      │  │  代码嵌入       │  │  增量更新       │  │
-│  │  (近似最近邻)    │  │  (多策略分词)    │  │  (实时索引)     │  │
-│  └────────────────┘  └────────────────┘  └────────────────┘  │
+│              向量引擎 (C++17 — HNSW)                          │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────────┐  │
+│  │  HNSW 索引  │  │  距离计算   │  │  Code Embedder        │  │
+│  │  (hnswlib)  │  │  (SIMD)    │  │  (ONNX/API)           │  │
+│  └────────────┘  └────────────┘  └────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🧩 技术栈
+## 🔒 安全架构
 
-<table>
-<tr>
-<th>层级</th>
-<th>语言</th>
-<th>框架 / 库</th>
-<th>职责</th>
-</tr>
-<tr>
-<td>🎨 前端</td>
-<td>TypeScript</td>
-<td>Next.js 14 · TailwindCSS · Zustand · ReactFlow · Monaco Editor</td>
-<td>UI 交互 · 工作流编辑 · 代码预览</td>
-</tr>
-<tr>
-<td>🟠 API 网关</td>
-<td>Java 21</td>
-<td>Spring Boot 3 · Spring Security · gRPC · WebSocket · RabbitMQ</td>
-<td>认证鉴权 · DAG 调度 · Agent 编排</td>
-</tr>
-<tr>
-<td>🟢 Agent 运行时</td>
-<td>Python 3.11</td>
-<td>FastAPI · LangGraph · LangChain · Pydantic v2</td>
-<td>Agent 逻辑 · LLM 编排 · 工具调用</td>
-</tr>
-<tr>
-<td>🔵 向量引擎</td>
-<td>C++17</td>
-<td>HNSWlib · pybind11 · Google Test</td>
-<td>语义代码搜索 · 向量索引</td>
-</tr>
-<tr>
-<td>⚙️ 基础设施</td>
-<td>—</td>
-<td>Docker · PostgreSQL · Redis · MinIO · RabbitMQ</td>
-<td>容器化部署 · 数据持久化</td>
-</tr>
-</table>
+DeepAgent 采用纵深防御策略，在每一层都实施了安全措施：
+
+### 认证与授权
+- **JWT HMAC-SHA256**: 强制 32 字符最小密钥长度
+- **Token 黑名单**: Redis 统一前缀，覆盖 HTTP + WebSocket
+- **Agent 所有权**: API Gateway 层维护 agentId→userId 映射
+- **内部 API 密钥**: Agent Runtime 要求 X-DeepAgent-Internal-Key
+- **RBAC**: 用户角色 (USER/ADMIN/VIEWER)，Actuator 端点仅 ADMIN
+
+### 速率限制
+- 认证接口: 10 次/分钟/IP — 防暴力破解
+- 通用 API: 100 次/分钟/用户 — 防 DoS
+- 支持 Redis 多实例和内存回退
+
+### WebSocket 安全
+- STOMP CONNECT: JWT 认证 + 黑名单检查
+- STOMP SUBSCRIBE: 仅允许 `/topic/project/` 和 `/user/` 前缀
+
+### Agent 工具安全
+- TerminalTool: 四层防御 — 语法过滤 → 白名单 → 黑名单 → 路径检查
+- FileOps: 路径白名单，10MB 限制，关闭失败
+- CoderAgent: 仅通过 LLM 审核，移除终端执行
 
 ---
 
 ## 🚀 快速开始
 
-### 环境要求
+### 前置要求
 
-| 依赖 | 版本 |
-|------|------|
-| Docker & Docker Compose | 最新版 |
-| Python | 3.11+ |
-| Java | 21+ |
-| Node.js | 20+ |
-| CMake | 3.20+ |
-| C++ 编译器 | 支持 C++17 |
+- Docker & Docker Compose
+- Node.js 18+ (本地开发)
+- Java 21 (本地开发)
+- Python 3.11+ (本地开发)
+- C++17 编译器 (向量引擎)
 
-### 一键启动（Docker Compose）
+### 一键部署 (Docker)
 
 ```bash
-git clone https://github.com/your-username/deepagent.git
-cd deepagent
+# 1. 克隆仓库
+git clone https://github.com/zgy0715/zgy_project.git
+cd zgy_project
 
-# 复制环境变量
+# 2. ⚠️ 配置环境变量 (必须!)
+#     复制 .env.example 为 .env，填入所有必填项
 cp .env.example .env
+#     编辑 .env，设置以下关键密钥:
+#     - JWT_SECRET: 至少32字符随机字符串
+#     - INTERNAL_API_KEY: 64字符十六进制随机字符串
+#     - OPENAI_API_KEY: 有效的 OpenAI API Key
 
-# 启动全部服务
-docker compose up -d
+# 3. 启动所有服务
+docker-compose up -d
+
+# 4. 访问 http://localhost:3000
 ```
 
-### 本地开发模式
-
-<details>
-<summary>📦 1. 构建向量引擎 (C++)</summary>
+### 本地开发
 
 ```bash
-cd vector-engine
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(nproc)
+# 1. 复制并配置环境变量
+cp .env.example .env
+# 编辑 .env 填入 JWT_SECRET (≥32字符), INTERNAL_API_KEY, OPENAI_API_KEY
 
-# 运行测试
-ctest --output-on-failure
-```
+# 2. 启动数据库依赖 (Docker)
+docker-compose up -d postgres redis rabbitmq
 
-</details>
-
-<details>
-<summary>🐍 2. 启动 Agent 运行时 (Python)</summary>
-
-```bash
-cd agent-runtime
-python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m app.main
-```
-
-</details>
-
-<details>
-<summary>☕ 3. 启动 API 网关 (Java)</summary>
-
-```bash
+# 3. 启动 API Gateway (Java)
 cd api-gateway
-./mvnw spring-boot:run
-```
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 
-</details>
+# 4. 启动 Agent Runtime (Python)
+cd agent-runtime
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 
-<details>
-<summary>⚛️ 4. 启动前端 (Next.js)</summary>
-
-```bash
+# 5. 启动前端 (Node.js)
 cd frontend
 npm install
 npm run dev
+# 访问 http://localhost:3000
 ```
-
-</details>
-
-访问 `http://localhost:3000` 开始使用！
 
 ---
 
 ## 🤖 Agent 详解
 
-<table>
-<tr>
-<th width="100">Agent</th>
-<th>职责</th>
-<th>核心能力</th>
-</tr>
-<tr>
-<td><strong>🧑‍💻 Coder</strong></td>
-<td>代码生成</td>
-<td>接收自然语言需求，生成生产级代码；支持多语言；遵循项目级编码规范（长期记忆）</td>
-</tr>
-<tr>
-<td><strong>🔍 Reviewer</strong></td>
-<td>代码审查</td>
-<td>自动检测 Bug、安全漏洞、性能问题、代码风格违规；输出结构化反馈供 Coder 修正</td>
-</tr>
-<tr>
-<td><strong>🧪 Tester</strong></td>
-<td>测试生成</td>
-<td>基于 Coder 产出生成单元测试与集成测试；自动执行测试并报告覆盖率</td>
-</tr>
-<tr>
-<td><strong>🚀 Deployer</strong></td>
-<td>部署配置</td>
-<td>根据项目技术栈自动生成 Dockerfile、CI/CD 流水线配置、部署脚本</td>
-</tr>
-</table>
+### Coder Agent — 代码生成
 
-### Agent 协作流程
+Coder Agent 负责根据任务描述生成生产级代码。它支持多文件生成、增量修改，并可利用语义搜索理解现有代码库。
 
-```
-用户需求 ──→ Coder Agent ──→ Reviewer Agent ──→ Tester Agent ──→ Deployer Agent
-               │                  │                  │                 │
-               │    不通过 ←───────┘                  │                 │
-               │    (返回修改)                         │   测试失败 ←────┘
-               │                                      │   (返回修复)     
-               ▼                                      ▼                 
-           代码生成                               测试通过 ──→ 部署配置
-```
+- **默认工具**: 文件读写、代码搜索
+- **生命周期**: 分析需求 → 制定计划 → 生成代码 → 自我审查
+- **安全限制**: 不允许直接执行生成的代码，通过 LLM 审核质量
+
+### Reviewer Agent — 代码审查
+
+Reviewer Agent 对 Coder 生成的代码进行全面审查，检测 Bug、安全漏洞和风格问题。
+
+### Tester Agent — 测试生成
+
+Tester Agent 为代码自动生成单元测试和集成测试。
+
+### Deployer Agent — 部署配置
+
+Deployer Agent 分析代码并生成 Dockerfile 和 CI/CD 配置。
 
 ---
 
 ## 📁 项目结构
 
-<details>
-<summary>🔵 向量引擎 — <code>vector-engine/</code> (26 文件)</summary>
-
 ```
-vector-engine/
-├── CMakeLists.txt              # 顶层 CMake (hnswlib/pybind11/Google Test)
-├── cmake/FindHnswlib.cmake     # CMake 查找模块
-├── third_party/CMakeLists.txt  # FetchContent 依赖管理
-├── include/deepagent/
-│   └── vector_engine.h         # 对外统一头文件
-├── src/
-│   ├── hnsw/                   # HNSW 近似最近邻索引
-│   │   ├── index_config.h      #   索引配置 (M/ef_construction/ef_search/metric)
-│   │   ├── hnsw_index.h        #   HNSWIndex 类 (Pimpl 模式)
-│   │   └── hnsw_index.cpp      #   build/search/insert/save/load 实现
-│   ├── embedding/              # 代码嵌入生成
-│   │   ├── tokenizer.h/cpp     #   代码分词器 (ByFunction/ByClass/ByBlock/ByLine)
-│   │   ├── code_embedder.h     #   CodeEmbedder 类 (Pimpl 模式)
-│   │   └── code_embedder.cpp   #   Dummy/API/ONNX 后端
-│   ├── storage/                # 向量持久化存储
-│   │   ├── vector_store.h/cpp  #   VectorStore (CRUD + search + 持久化)
-│   │   └── metadata_manager.h/cpp  # 元数据管理 (id→JSON 映射)
-│   └── utils/                  # 工具库
-│       ├── distance.h/cpp      #   距离计算 (Cosine/Euclidean/InnerProduct)
-│       ├── logger.h/cpp        #   线程安全日志系统
-│       └── thread_pool.h/cpp   #   线程池 (并行搜索)
-├── bindings/
-│   ├── pybind_module.cpp       # pybind11 绑定 (暴露给 Python Agent)
-│   └── CMakeLists.txt
-└── tests/                      # Google Test 单元测试
-    ├── test_hnsw.cpp           #   HNSW 索引测试 (9 用例)
-    ├── test_embedder.cpp       #   嵌入器测试 (7 用例)
-    └── test_distance.cpp       #   距离计算测试 (14 用例)
+zgy_project/
+├── frontend/                    # Next.js 14 前端
+│   ├── src/
+│   │   ├── app/                 # App Router 页面
+│   │   ├── components/          # React 组件
+│   │   │   ├── agents/          # Agent 对话/状态组件
+│   │   │   ├── code/            # Monaco 编辑器/文件树
+│   │   │   ├── dashboard/       # 仪表板组件
+│   │   │   ├── layout/          # 布局组件
+│   │   │   ├── ui/              # 通用 UI 组件
+│   │   │   └── workflow/        # ReactFlow 工作流组件
+│   │   ├── lib/                 # 工具库/API 客户端
+│   │   │   ├── hooks/           # 自定义 Hooks
+│   │   │   └── __tests__/       # API 契约测试
+│   │   ├── stores/              # Zustand 状态管理
+│   │   └── types/               # TypeScript 类型定义
+│   └── package.json
+├── api-gateway/                 # Java 21 Spring Boot 3
+│   ├── src/main/java/com/deepagent/
+│   │   ├── auth/                # 认证 (JWT, 登录/注册)
+│   │   ├── common/              # 通用 (异常处理, 限流过滤)
+│   │   ├── config/              # 配置 (CORS, Redis, WebSocket)
+│   │   ├── orchestrator/        # Agent/Workflow 编排
+│   │   ├── project/             # 项目管理
+│   │   ├── scheduler/           # DAG 调度器
+│   │   └── websocket/           # WebSocket 推送
+│   └── src/main/resources/      # 应用配置
+├── agent-runtime/               # Python 3.11 FastAPI
+│   ├── app/
+│   │   ├── agents/              # Agent 实现
+│   │   ├── api/                 # API 路由 + 中间件
+│   │   ├── graph/               # LangGraph 工作流
+│   │   ├── memory/              # Agent 记忆系统
+│   │   ├── models/              # 数据模型
+│   │   ├── services/            # 服务 (LLM, 事件, 向量)
+│   │   ├── tools/               # Agent 工具
+│   │   └── utils/               # 工具函数
+│   └── tests/                   # 测试
+├── vector-engine/               # C++17 HNSW
+│   ├── bindings/                # pybind11 绑定
+│   ├── include/                 # 公共头文件
+│   ├── src/                     # 核心实现
+│   │   ├── hnsw/                # HNSW 索引
+│   │   ├── embedding/           # 文本嵌入
+│   │   ├── storage/             # 存储管理
+│   │   └── utils/               # 工具 (线程池, 距离计算)
+│   └── tests/                   # 测试
+├── scripts/                     # E2E 测试/性能测试
+├── .env.example                 # 环境变量模板
+├── docker-compose.yml           # 部署编排
+└── README.md
 ```
-
-</details>
-
-<details>
-<summary>🟢 Agent 运行时 — <code>agent-runtime/</code> (58 文件)</summary>
-
-```
-agent-runtime/
-├── app/
-│   ├── main.py                 # FastAPI 入口 (路由/中间件/生命周期)
-│   ├── config.py               # Pydantic BaseSettings 配置
-│   ├── models/
-│   │   ├── schemas.py          #   Pydantic v2 数据模型
-│   │   └── enums.py            #   枚举 (AgentType/TaskStatus/MessageRole)
-│   ├── agents/                 # 🤖 四大专业 Agent
-│   │   ├── base.py             #   Agent 基类 (init→plan→execute→reflect→respond)
-│   │   ├── coder.py            #   Coder Agent (代码生成)
-│   │   ├── reviewer.py         #   Reviewer Agent (代码审查)
-│   │   ├── tester.py           #   Tester Agent (测试生成)
-│   │   ├── deployer.py         #   Deployer Agent (部署配置)
-│   │   └── registry.py         #   Agent 注册表
-│   ├── graph/                  # 🔗 LangGraph 工作流编排
-│   │   ├── workflow.py         #   StateGraph 定义 (Agent 间 DAG)
-│   │   ├── nodes.py            #   图节点 (每个 Agent 一个节点)
-│   │   ├── edges.py            #   条件边 (根据输出决定路由)
-│   │   └── state.py            #   共享状态 (TypedDict)
-│   ├── memory/                 # 🧠 记忆系统
-│   │   ├── base.py             #   记忆基类
-│   │   ├── short_term.py       #   短期记忆 (滑动窗口)
-│   │   ├── long_term.py        #   长期记忆 (向量存储)
-│   │   └── summarizer.py       #   记忆摘要压缩器
-│   ├── tools/                  # 🔧 Agent 工具框架
-│   │   ├── base.py             #   BaseTool (ABC)
-│   │   ├── file_ops.py         #   文件读写
-│   │   ├── terminal.py         #   终端命令执行
-│   │   ├── git_ops.py          #   Git 操作
-│   │   ├── code_search.py      #   代码语义搜索 (调用 C++ 引擎)
-│   │   └── web_search.py       #   网络搜索
-│   ├── services/               # 业务服务
-│   │   ├── llm_service.py      #   LLM 调用 (OpenAI/Ollama 双 Provider)
-│   │   ├── vector_service.py   #   向量引擎服务 (pybind11/HTTP)
-│   │   ├── project_service.py  #   项目管理
-│   │   └── event_service.py    #   WebSocket 事件推送
-│   ├── api/
-│   │   ├── routes/             #   API 端点 (agents/workflows/search/health)
-│   │   └── middleware/         #   请求日志 + 全局异常处理
-│   └── utils/
-│       ├── prompt_templates.py #   Prompt 模板管理
-│       ├── code_parser.py      #   AST 代码解析
-│       └── token_counter.py    #   Token 计数 (tiktoken)
-├── tests/                      # pytest 测试
-├── requirements.txt
-├── pyproject.toml              # black/isort/mypy/pytest/ruff 配置
-└── Dockerfile
-```
-
-</details>
-
-<details>
-<summary>🟠 API 网关 — <code>api-gateway/</code> (53 文件) — 97% 完成</summary>
-
-```
-api-gateway/
-├── pom.xml                     # Maven (Spring Boot 3.2/gRPC/Redis/RabbitMQ)
-├── src/main/java/com/deepagent/
-│   ├── DeepAgentApplication.java  # 启动类
-│   ├── config/                 # 配置类
-│   │   ├── SecurityConfig.java #   Spring Security + JWT
-│   │   ├── WebSocketConfig.java#   STOMP WebSocket
-│   │   ├── WebSocketAuthInterceptor.java # STOMP JWT 认证拦截器
-│   │   ├── GrpcConfig.java     #   gRPC 客户端
-│   │   ├── RedisConfig.java    #   Redis 序列化
-│   │   ├── RabbitMQConfig.java #   交换机/队列定义
-│   │   └── CorsConfig.java     #   CORS 跨域
-│   ├── auth/                   # 🔐 认证模块 (JWT 双令牌 + Redis 黑名单 + 登出)
-│   ├── project/                # 📁 项目管理 (CRUD)
-│   ├── scheduler/              # ⏱ DAG 任务调度 (Kahn 拓扑排序 + Virtual Threads 并行)
-│   ├── orchestrator/           # 🎼 Agent 编排
-│   │   ├── controller/         #   AgentController + WorkflowController (REST 代理)
-│   │   ├── client/             #   AgentRestClient (WebClient → Python FastAPI)
-│   │   ├── AgentOrchestrator.java # 编排服务
-│   │   └── AgentServiceGrpcClient.java # gRPC 客户端
-│   ├── websocket/              # 📡 实时推送 (STOMP)
-│   └── common/                 # 通用组件 (异常处理/统一响应/参数校验)
-├── src/main/resources/
-│   ├── application.yml         # 主配置
-│   ├── application-dev.yml     # 开发环境
-│   ├── application-prod.yml    # 生产环境
-│   ├── db/migration/V1__init_schema.sql  # Flyway 数据库迁移
-│   └── proto/agent_service.proto          # gRPC Protobuf 定义
-└── src/test/                   # JUnit 5 测试
-```
-
-</details>
-
-<details>
-<summary>⚛️ 前端 — <code>frontend/</code> (63 文件) — 97% 完成</summary>
-
-```
-frontend/
-├── src/
-│   ├── app/                    # 📄 App Router 页面
-│   │   ├── layout.tsx          #   根布局
-│   │   ├── page.tsx            #   Landing Page
-│   │   ├── (auth)/             #   登录/注册 (已对接API)
-│   │   └── (dashboard)/        #   仪表盘 (项目列表/详情/工作流/Agent/代码)
-│   ├── components/
-│   │   ├── ui/                 # 🧩 基础 UI 组件 (Button/Input/Card/Badge/Dialog/Toast/Spinner)
-│   │   ├── layout/             # 📐 布局组件 (Sidebar/Header — 已被Dashboard使用)
-│   │   ├── workflow/           # 🎨 工作流编辑器 (ReactFlow DAG/Agent 节点/条件边/工具栏/暂停恢复)
-│   │   ├── agents/             # 🤖 Agent 交互 (对话面板/消息气泡/状态指示/思考链/选择器)
-│   │   ├── code/               # 💻 代码编辑器 (Monaco 编辑模式/Diff/文件树/xterm.js终端)
-│   │   └── dashboard/          # 📊 仪表盘 (统计卡片/活动流/性能图表)
-│   ├── stores/                 # 📦 Zustand 状态管理 (5个Store, mock/api双模式)
-│   ├── lib/                    # 🔧 工具库 (API客户端/STOMP WebSocket/SSE流式/Hooks)
-│   └── types/                  # 📝 TypeScript 类型定义 (与后端对齐)
-└── Dockerfile
-```
-
-</details>
 
 ---
 
-## 🗺️ 开发路线
+## 🏗️ 开发路线图
 
-- [x] 项目架构设计
-- [x] 项目骨架搭建 (200+ 文件)
-- [x] 向量引擎核心 (C++ HNSW + pybind11)
-- [x] Agent 运行时 (LangGraph + FastAPI)
-- [x] 前端 Demo (Next.js — 6页面/50+组件/Mock数据)
-- [x] 可视化工作流编辑器 (ReactFlow DAG)
-- [x] Coder & Reviewer Agent 业务逻辑深化 (工具注入/结构化审查/LLM路由/自定义DAG)
-- [x] API 网关 (Spring Boot 业务实现 — Agent/Workflow代理/REST客户端/登出/WebSocket认证)
-- [x] 前端 API 对接 & WebSocket 实时通信 (STOMP/双模式Store/SSE流式/xterm.js终端)
-- [x] 端到端集成联调 (E2E测试/API契约测试/集成测试/跨模块验证)
-- [x] 性能优化与基准测试 (缓存中间件/并行嵌入/LLM连接池/基准测试体系)
-- [x] 全面系统检查与修复 (安全漏洞/功能缺陷/代码错误/UI优化)
+### v0.1.x — 功能验证阶段 ✅
+- [x] 基础项目结构和模块划分
+- [x] 前端页面框架和路由
+- [x] Agent 对话和 SSE 流式响应
+- [x] 可视化工作流编辑器 (DAG)
+- [x] 代码编辑器 (Monaco)
+- [x] WebSocket 实时通信
+- [x] 终端模拟器 (xterm.js)
+- [x] 语言服务 (TypeScript/Python/Java)
+- [x] 用户系统 (注册/登录/JWT)
+- [x] 项目管理 CRUD
+- [x] Semantic code search
+- [x] 端到端集成联调
+- [x] 性能优化与基准测试
+- [x] 全面系统检查与修复
+- [x] 移除 Mock 模式
+
+### v0.2.x — 安全加固阶段 ✅
+- [x] JWT 密钥强度最小长度校验
+- [x] Token 黑名单 Key 一致性修复
+- [x] Agent 所有权验证 (IDOR 防护)
+- [x] Agent Runtime CORS 限制
+- [x] 终端工具白名单精简
+- [x] 内部 API 密钥认证
+- [x] 速率限制 (Rate Limiting)
+- [x] WebSocket 订阅授权
+- [x] HTTP 安全响应头
+- [x] Cookie 安全标记
+- [x] Actuator 端点保护
+- [x] 所有 Controller 认证标注
+- [x] HNSW 构造函数修复
 - [ ] 演示视频与文档
 
 ---
@@ -506,7 +368,7 @@ Agent 具备项目级长期记忆，随着使用积累越来越了解项目上�
 
 ### 🏗️ 完整工程化实践
 
-Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——不是 Demo，是可部署的产品级项目
+Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——不是 Demo，是可部署的产品级项目，经过全栈安全审计加固
 
 </td>
 </tr>
@@ -534,22 +396,49 @@ Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——�
 
 ## 📋 变更日志
 
-## v0.1.2 - 2026-06-14
+### v0.2.1 - 2026-06-15 — 安全审计修复
 
-### 重大变更: 移除 Mock 模式
+详见 [AIREAD.md](./AIREAD.md#v021---2026-06-15--安全审计修复) 完整变更日志。
+
+#### 🔴 严重漏洞修复
+- JWT Secret 添加 32 字符最小长度校验，拒绝开发默认值
+- 修复 WebSocket Token 黑名单 Key 前缀不一致 (`token:blacklist:` → `jwt:blacklist:`)
+- Agent 控制器添加用户所有权追踪和 `@AuthenticationPrincipal` 验证
+- Agent Runtime 默认 CORS 从 `["*"]` 改为 `["http://localhost:8080"]`
+- docker-compose 移除所有默认密码，使用 `:?` 语法强制要求环境变量
+
+#### 🟠 高危漏洞修复
+- 移除终端工具中的编译器/构建工具白名单 (`gcc`, `javac`, `mvn`, `cargo` 等)
+- CoderAgent 移除终端代码执行验证逻辑
+- Agent Runtime 新增 `InternalAuthMiddleware` 内部 API Key 认证
+- 前端中间件移除开发模式认证绕过，添加安全响应头
+
+#### 🟡 中危问题修复
+- 新增 `RateLimitFilter` — 认证接口 10次/分钟，通用 API 100次/分钟
+- WebSocket 订阅添加目标验证，仅允许 `/topic/project/` 和 `/user/` 前缀
+- Auth Cookie 添加 `SameSite=Strict` 和 `Secure`（生产环境）
+- 所有 Controller 添加 `@AuthenticationPrincipal` 认证标注
+- Actuator 和 Swagger 端点改为仅 `ADMIN` 角色可访问
+- HNSW 路径构造函数修复 (`load_from_file()` + 元数据持久化)
+- 所有 API Gateway 到 Agent Runtime 的请求添加内部认证头
+- `.env.example` 添加安全密钥生成指导和安全警告
+
+### v0.1.2 - 2026-06-14
+
+#### 重大变更: 移除 Mock 模式
 - 删除 `mock-data.ts` (1300+ 行硬编码数据)
 - `API_MODE` 从 `'mock' | 'api'` 改为固定 `'api'`
 - 所有 Store 移除 mock 分支逻辑
 - 登录页移除 Demo Mode 按钮
 
-### Critical 修复
+#### Critical 修复
 - Agent/Workflow 列表页增删改操作改为调用后端 API (原仅修改本地 state)
 - Code 页面添加 useEffect 自动加载文件树和文件内容
 - Docs 页面添加项目选择和文档加载功能
 - 修复 `user.id` 始终为空字符串 (改为使用 username 作为临时 ID)
 - 移除 Agent/Workflow 创建时硬编码的 `projectId: 'proj-1'`
 
-### High 修复
+#### High 修复
 - API 客户端 `agentsApi.list()` 和 `workflowsApi.list()` 新增 `projectId` 参数支持
 - Dashboard 移除硬编码统计数据 (change/testPassRate/codeLines 估算值)
 - Settings 主题切换修复 system 模式 (检测系统偏好)
@@ -559,21 +448,21 @@ Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——�
 - 项目详情页 workflows 按 projectId 过滤
 - Middleware 添加 `/auth/forgot-password` 到公开路径
 
-### 代码清理
+#### 代码清理
 - 移除 terminal.tsx 中的 API_MODE 条件判断和 simulateCommand
 - 移除 code-editor.tsx 中的 mock 注释
 - Terminal 本地命令精简为 help/clear/echo/date/whoami
 
-## v0.1.1 - 2026-06-13
+### v0.1.1 - 2026-06-13
 
-### 安全修复
+#### 安全修复
 - 修复SSE流式端点异常信息可能泄露API Key的问题
 - Logout时同时黑名单Refresh Token
 - Docker Compose JWT Secret不再使用硬编码占位符
 - Docker Compose API Key环境变量名与config.py对齐
 - LLM Service添加API Key非空验证
 
-### 功能修复
+#### 功能修复
 - 统一SSE流式事件格式（前后端双格式兼容）
 - 修复WebSocket消息格式（AgentEventPublisher发送完整AgentEvent对象）
 - 添加GET /auth/me端点
@@ -585,7 +474,7 @@ Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——�
 - 健康检查实际验证LLM配置
 - Ollama Provider超时使用配置值
 
-### UI/UX优化
+#### UI/UX优化
 - 所有列表页添加空状态提示
 - 登录/注册页左侧面板文案中文化
 - Dashboard子页面标题统一为中文
@@ -595,7 +484,7 @@ Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——�
 - Projects页改用store数据源
 - Settings页Save Profile添加事件处理
 
-### 代码质量
+#### 代码质量
 - 添加GlobalExceptionHandler缺失的异常处理器（405/415/数据库异常）
 - LLMServiceError状态码从400改为502
 - useAgent/useWorkflow hooks统一使用store方法

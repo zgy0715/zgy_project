@@ -1,4 +1,4 @@
-version: "3.9"
+﻿version: "3.9"
 
 services:
   # ========================
@@ -10,7 +10,7 @@ services:
     environment:
       POSTGRES_DB: deepagent
       POSTGRES_USER: deepagent
-      POSTGRES_PASSWORD: deepagent_secret
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deepagent_secret}
     ports:
       - "5432:5432"
     volumes:
@@ -39,7 +39,7 @@ services:
     container_name: deepagent-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: deepagent
-      RABBITMQ_DEFAULT_PASS: deepagent_secret
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-deepagent_secret}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -56,7 +56,7 @@ services:
     container_name: deepagent-minio
     environment:
       MINIO_ROOT_USER: deepagent
-      MINIO_ROOT_PASSWORD: deepagent_secret
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-deepagent_secret}
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -81,11 +81,13 @@ services:
       SPRING_PROFILES_ACTIVE: prod
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/deepagent
       SPRING_DATASOURCE_USERNAME: deepagent
-      SPRING_DATASOURCE_PASSWORD: deepagent_secret
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-deepagent_secret}
       SPRING_DATA_REDIS_HOST: redis
       SPRING_RABBITMQ_HOST: rabbitmq
       AGENT_RUNTIME_URL: http://agent-runtime:8000
-      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-in-production}
+      AGENT_RUNTIME_INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required — generate a random 64-character string}
+      # JWT_SECRET is REQUIRED — must be at least 32 characters. Generate with: openssl rand -hex 32
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — generate a strong 64-character random string}
     ports:
       - "8080:8080"
     depends_on:
@@ -103,14 +105,15 @@ services:
       dockerfile: Dockerfile
     container_name: deepagent-agent-runtime
     environment:
-      DATABASE_URL: postgresql://deepagent:deepagent_secret@postgres:5432/deepagent
+      DATABASE_URL: postgresql://deepagent:${POSTGRES_PASSWORD:-deepagent_secret}@postgres:5432/deepagent
       REDIS_URL: redis://redis:6379/0
-      RABBITMQ_URL: amqp://deepagent:deepagent_secret@rabbitmq:5672/
+      RABBITMQ_URL: amqp://deepagent:${RABBITMQ_PASSWORD:-deepagent_secret}@rabbitmq:5672/
       LLM_PROVIDER: openai
-      LLM_OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder}
+      LLM_OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set}
       LLM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       LLM_OPENAI_MODEL: ${LLM_MODEL:-gpt-4o}
       VECTOR_ENGINE_URL: http://localhost:8080
+      SECURITY_INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required — must match the API Gateway value}
     ports:
       - "8000:8000"
       - "50051:50051"

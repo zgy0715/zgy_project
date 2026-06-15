@@ -1,6 +1,7 @@
-package com.deepagent.config;
+﻿package com.deepagent.config;
 
 import com.deepagent.auth.jwt.JwtAuthenticationFilter;
+import com.deepagent.common.filter.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,14 +21,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 /**
  * Spring Security configuration with JWT-based stateless authentication.
  *
- * <p>This configuration sets up:</p>
- * <ul>
- *   <li>Stateless session management (no server-side sessions)</li>
- *   <li>JWT token validation filter before UsernamePasswordAuthenticationFilter</li>
- *   <li>Public endpoints for authentication and WebSocket</li>
- *   <li>BCrypt password encoding</li>
- *   <li>Method-level security with @PreAuthorize support</li>
- * </ul>
+ * <p>Configures JWT authentication, rate limiting, and endpoint security.
+ * Actuator endpoints are restricted to internal/admin use only.</p>
  */
 @Configuration
 @EnableWebSecurity
@@ -36,26 +31,15 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
 
     private static final String[] PUBLIC_ENDPOINTS = {
             "/api/v1/auth/register",
             "/api/v1/auth/login",
             "/api/v1/auth/refresh",
             "/ws/**",
-            "/actuator/health",
-            "/actuator/info",
-            "/v3/api-docs/**",
-            "/swagger-ui/**",
-            "/swagger-ui.html"
     };
 
-    /**
-     * Configures the security filter chain with JWT authentication.
-     *
-     * @param http the HttpSecurity builder
-     * @return the configured SecurityFilterChain
-     * @throws Exception if configuration fails
-     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http
@@ -65,28 +49,19 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").hasRole("ADMIN")
                         .anyRequest().authenticated())
+                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 
-    /**
-     * Provides BCrypt password encoder bean.
-     *
-     * @return the password encoder instance
-     */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(12);
     }
 
-    /**
-     * Exposes the AuthenticationManager as a bean for programmatic authentication.
-     *
-     * @param config the authentication configuration
-     * @return the authentication manager
-     * @throws Exception if retrieval fails
-     */
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();

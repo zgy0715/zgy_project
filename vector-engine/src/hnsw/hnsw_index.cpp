@@ -1,6 +1,10 @@
-#include "hnsw/hnsw_index.h"
+﻿#include "hnsw/hnsw_index.h"
 
 #include <stdexcept>
+#include <fstream>
+#include <sstream>
+#include <cstdarg>
+#include <cstdio>
 #include <utility>
 
 #include <hnswlib/hnswlib.h>
@@ -63,11 +67,26 @@ public:
         init_index();
     }
 
-    explicit Impl(const std::string& path)
-    {
-        // We need to know the config before loading; read metadata first.
-        // For now, load with a default and overwrite.
-        throw std::runtime_error("Load-from-path constructor requires config; use load() instead");
+    /// Load index from a previously saved file.
+    /// @param path  Path to the saved index file
+    /// @param config  Known configuration matching the saved index
+    void load_from_file(const std::string& path) {
+        // Load metadata from the JSON sidecar file if it exists
+        std::string meta_path = path + ".meta.json";
+        std::ifstream meta_file(meta_path);
+        if (meta_file.good()) {
+            std::stringstream buffer;
+            buffer << meta_file.rdbuf();
+            config_ = IndexConfig::from_json(buffer.str());
+        } else {
+            // No metadata file; use current config defaults
+            // The caller should ensure config_.dim matches the saved index.
+            log_warn("No metadata file found at %s — using current config", meta_path.c_str());
+        }
+
+        init_space();
+        init_index();
+        index_->loadIndex(path, space_.get(), config_.max_elements);
     }
 
     void init_space() {
@@ -144,12 +163,16 @@ public:
 
     void save(const std::string& path) const {
         index_->saveIndex(path);
+        // Save metadata alongside the index for future loading
+        std::string meta_path = path + ".meta.json";
+        std::ofstream meta_file(meta_path);
+        if (meta_file.good()) {
+            meta_file << config_.to_json();
+        }
     }
 
     void load(const std::string& path) {
-        init_space();
-        init_index();
-        index_->loadIndex(path, space_.get(), config_.max_elements);
+        load_from_file(path);
     }
 
     std::size_t size() const {
@@ -171,6 +194,16 @@ private:
     IndexConfig config_;
     std::unique_ptr<hnswlib::SpaceInterface<float>> space_;
     std::unique_ptr<hnswlib::HierarchicalNSW<float>> index_;
+
+    static void log_warn(const char* fmt, ...) {
+        // Simple stub; in production, use a proper logger
+        fprintf(stderr, "[HNSWIndex] WARNING: ");
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(stderr, fmt, args);
+        va_end(args);
+        fprintf(stderr, "\n");
+    }
 };
 
 // ── HNSWIndex forwarding ────────────────────────────────────────────────────
@@ -178,8 +211,10 @@ private:
 HNSWIndex::HNSWIndex(const IndexConfig& config)
     : impl_(std::make_unique<Impl>(config)) {}
 
-HNSWIndex::HNSWIndex(const std::string& path)
-    : impl_(std::make_unique<Impl>(path)) {}
+HNSWIndex::HNSWIndex(const std::string& path, const IndexConfig& config)
+    : impl_(std::make_unique<Impl>(config)) {
+    impl_->load(path);
+}
 
 HNSWIndex::~HNSWIndex() = default;
 

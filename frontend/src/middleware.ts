@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Public paths that don't require authentication
@@ -21,21 +21,23 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 开发模式下跳过服务端认证检查，由客户端 Dashboard Layout 处理
-  if (process.env.NODE_ENV === 'development') {
-    return NextResponse.next();
-  }
+  // Check for auth cookie set by auth-store on successful login
+  const authCookie = request.cookies.get('deepagent_authenticated')?.value;
 
-  // Production: check for auth cookie
-  const authToken = request.cookies.get('deepagent_authenticated')?.value;
-
-  if (!authToken || authToken !== 'true') {
+  if (!authCookie || authCookie !== 'true') {
+    // Not authenticated — redirect to login with callback
     const loginUrl = new URL('/auth/login', request.url);
     loginUrl.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  return NextResponse.next();
+  // Set security headers on all authenticated responses
+  const response = NextResponse.next();
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  return response;
 }
 
 export const config = {

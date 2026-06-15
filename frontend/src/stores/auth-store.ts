@@ -1,4 +1,4 @@
-// Auth state management with Zustand
+﻿// Auth state management with Zustand
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -27,10 +27,14 @@ interface AuthState {
 }
 
 // Helper: set/clear auth cookie for Next.js middleware
+// Uses SameSite=Strict for CSRF protection and Secure when available
 function setAuthCookie(authenticated: boolean) {
   if (typeof document !== 'undefined') {
-    const secure = location.protocol === 'https:' ? '; secure' : '';
-    document.cookie = `deepagent_authenticated=${authenticated ? 'true' : ''}; path=/; max-age=${authenticated ? 86400 : 0}; SameSite=Lax${secure}`;
+    const secure = location.protocol === 'https:' ? '; Secure' : '';
+    // Set to strict to prevent CSRF via cookie-based auth
+    const sameSite = '; SameSite=Strict';
+    const maxAge = authenticated ? '; max-age=86400' : '; max-age=0';
+    document.cookie = `deepagent_authenticated=${authenticated ? 'true' : ''}; path=/${maxAge}${sameSite}${secure}`;
   }
 }
 
