@@ -1,4 +1,4 @@
-﻿﻿﻿﻿"""Terminal command execution tool."""
+﻿﻿"""Terminal command execution tool."""
 
 import asyncio
 import logging
