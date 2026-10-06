@@ -2,11 +2,10 @@ package com.deepagent.scheduler.repository;
 
 import com.deepagent.scheduler.entity.Task;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Repository interface for Task entity persistence operations.
@@ -32,11 +31,17 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findByProjectIdAndStatus(Long projectId, Task.Status status);
 
     /**
-     * Finds all pending tasks that have no unresolved dependencies.
-     *
-     * @param projectId the project ID
-     * @return list of tasks ready for execution
+     * 按 (任务 ID, 归属用户) 查询，用于越权校验。
      */
-    @Query("SELECT t FROM Task t WHERE t.projectId = :projectId AND t.status = 'PENDING'")
-    List<Task> findPendingTasksByProjectId(@Param("projectId") Long projectId);
+    Optional<Task> findByIdAndOwnerId(Long id, Long ownerId);
+
+    /**
+     * 按项目与归属用户查询任务。
+     */
+    List<Task> findByProjectIdAndOwnerId(Long projectId, Long ownerId);
+
+    /**
+     * 判断项目是否属于该用户（项目级越权校验）。
+     */
+    boolean existsByProjectIdAndOwnerId(Long projectId, Long ownerId);
 }

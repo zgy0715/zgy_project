@@ -1,0 +1,21 @@
+# Contents excluded from the Docker build context.
+#
+# The Dockerfile copies only `pom.xml` and `src/`, but Docker still ships the
+# whole context to the daemon. The committed repo carries a stale `target/`,
+# which can be tens of megabytes and is never used by the build.
+
+# Maven build output (rebuilt inside the image)
+target
+**/target
+
+# Version control / ignore files
+.git
+.gitignore
+.dockerignore
+
+# Local tooling / editor state
+.idea
+.vscode
+*.iml
+*.log
+.DS_Store

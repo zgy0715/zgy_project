@@ -143,6 +143,7 @@ export default function HomePage() {
 
     const line = terminalLines[visibleLines];
     let charIndex = 0;
+    let advanceTimer: ReturnType<typeof setTimeout> | null = null;
     setIsTyping(true);
     setCurrentText('');
 
@@ -154,14 +155,17 @@ export default function HomePage() {
         clearInterval(typeInterval);
         setIsTyping(false);
         // Move to next line after a pause
-        setTimeout(() => {
+        advanceTimer = setTimeout(() => {
           setVisibleLines((prev) => prev + 1);
           setCurrentText('');
         }, 800);
       }
     }, 30);
 
-    return () => clearInterval(typeInterval);
+    return () => {
+      clearInterval(typeInterval);
+      if (advanceTimer) clearTimeout(advanceTimer);
+    };
   }, [visibleLines]);
 
   return (

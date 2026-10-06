@@ -1,4 +1,4 @@
-﻿﻿﻿﻿"""FastAPI application entry point with route registration, middleware, and lifecycle events."""
+"""FastAPI application entry point with route registration, middleware, and lifecycle events."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -41,12 +41,31 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info("Starting %s v%s", settings.app_name, settings.app_version)
 
-    # If internal API key is not set, warn in startup
+    # Validate security-critical configuration at startup. The auth middleware
+    # already fails closed; surface the misconfiguration loudly at boot as well.
     if not settings.security.internal_api_key:
-        logger.warning(
-            "SECURITY_INTERNAL_API_KEY is not configured. "
-            "Set this environment variable to a secure random string and "
-            "configure it identically in the API Gateway for production."
+        if settings.security.allow_insecure_no_auth:
+            logger.warning(
+                "SECURITY_INTERNAL_API_KEY is not configured and "
+                "SECURITY_ALLOW_INSECURE_NO_AUTH is enabled — the API is "
+                "unprotected. Never use this configuration in production."
+            )
+        else:
+            logger.error(
+                "SECURITY_INTERNAL_API_KEY is not configured: every non-public "
+                "request will be rejected with 503 until it is set. Set this "
+                "environment variable to a secure random string and configure it "
+                "identically in the API Gateway."
+            )
+
+    # Validate the LLM credentials at startup instead of failing on the first
+    # request with an opaque 401 from the OpenAI SDK.
+    llm_key = settings.llm.openai_api_key
+    if not llm_key or llm_key == "sk-your-api-key-here":
+        logger.error(
+            "LLM_OPENAI_API_KEY is not configured: LLM-backed endpoints will "
+            "fail with a service error until it is set. `/api/v1/health` reports "
+            "the LLM as unconfigured."
         )
 
     # Startup: initialize connections and resources
@@ -71,7 +90,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize database connection pool
     try:
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+        from sqlalchemy.ext.asyncio import create_async_engine
 
         db_url = str(settings.database.url)
         if db_url.startswith("postgresql://"):
@@ -100,7 +119,7 @@ async def lifespan(app: FastAPI):
         _vector_service = VectorService()
         logger.info(
             "Vector engine client initialized (mode=%s)",
-            "native" if _vector_service._use_native else "http",
+            "native" if _vector_service.use_native else "http",
         )
     except Exception as exc:
         logger.warning("Vector engine initialization failed: %s (continuing without search)", exc)
@@ -117,7 +136,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown: clean up resources
     if _vector_service is not None:
-        logger.info("Vector engine client shut down")
+        try:
+            await _vector_service.close()
+            logger.info("Vector engine client shut down")
+        except Exception as exc:
+            logger.warning("Vector engine shutdown error: %s", exc)
 
     if _db_engine is not None:
         try:
@@ -152,7 +175,20 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # Register CORS middleware (applied before auth to allow preflight)
+    # Middleware execution order is the REVERSE of registration order: Starlette
+    # inserts every new middleware at index 0 of `user_middleware` and then wraps
+    # the stack in reverse, so the middleware registered LAST is the OUTERMOST.
+    # Registration here is therefore innermost -> outermost:
+    #   RequestLogger -> InternalAuth -> CORS
+    # which lets CORSMiddleware answer a browser preflight (OPTIONS carries no
+    # internal key header) before InternalAuthMiddleware can reject it.
+    # Register the request logger first (innermost).
+    app.add_middleware(RequestLoggerMiddleware)
+
+    # Register internal auth middleware
+    app.add_middleware(InternalAuthMiddleware)
+
+    # Register CORS middleware LAST so it is applied first, allowing preflight
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -160,12 +196,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Register internal auth middleware
-    app.add_middleware(InternalAuthMiddleware)
-
-    # Register custom middleware
-    app.add_middleware(RequestLoggerMiddleware)
 
     # Register global error handlers
     register_error_handlers(app)

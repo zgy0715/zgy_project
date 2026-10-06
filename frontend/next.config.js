@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Required by the Dockerfile runtime stage, which copies .next/standalone.
+  output: 'standalone',
   reactStrictMode: true,
   images: {
     remotePatterns: [

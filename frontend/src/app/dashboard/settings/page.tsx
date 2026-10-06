@@ -1,16 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuthStore } from '@/stores/auth-store';
+import { STORAGE_KEYS } from '@/lib/constants';
 
 type Theme = 'dark' | 'light' | 'system';
 
+const MIN_PASSWORD_LENGTH = 8; // matches the gateway's @Size(min = 8)
+
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
-  const setUser = useAuthStore((s) => s.setUser);
+  const updateProfile = useAuthStore((s) => s.updateProfile);
+  const changePassword = useAuthStore((s) => s.changePassword);
+  const storeError = useAuthStore((s) => s.error);
+  const clearError = useAuthStore((s) => s.clearError);
+  const isLoading = useAuthStore((s) => s.isLoading);
 
   const [username, setUsername] = useState(user?.username ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
@@ -22,20 +29,58 @@ export default function SettingsPage() {
   const [passwordError, setPasswordError] = useState('');
   const [passwordSaved, setPasswordSaved] = useState(false);
 
-  const [theme, setTheme] = useState<Theme>(
-    (typeof window !== 'undefined' && localStorage.getItem('deepagent_theme') as Theme) || 'dark'
-  );
+  // Start from the server-safe default and read localStorage after mount so the
+  // server and client markup match on the first render.
+  const [theme, setTheme] = useState<Theme>('dark');
 
-  const handleSaveProfile = () => {
-    if (user) {
-      // TODO: 调用后端更新用户资料API (PUT /auth/profile)
-      setUser({ ...user, username, email });
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.THEME) as Theme | null;
+    if (stored === 'dark' || stored === 'light' || stored === 'system') {
+      setTheme(stored);
+    }
+  }, []);
+
+  // Apply the theme and register exactly one system-preference listener, which
+  // is removed when the theme changes or the component unmounts.
+  useEffect(() => {
+    const root = document.documentElement;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const apply = (value: Theme) => {
+      root.classList.toggle('dark', value === 'dark' || (value === 'system' && mediaQuery.matches));
+    };
+
+    apply(theme);
+
+    if (theme !== 'system') return;
+
+    const handler = (e: MediaQueryListEvent) => {
+      root.classList.toggle('dark', e.matches);
+    };
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, [theme]);
+
+  const handleThemeChange = (newTheme: Theme) => {
+    setTheme(newTheme);
+    localStorage.setItem(STORAGE_KEYS.THEME, newTheme);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!user) return;
+    clearError();
+    const saved = await updateProfile({
+      username: username.trim() || undefined,
+      email: email.trim() || undefined,
+    });
+    if (saved) {
       setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 2000);
     }
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
+    clearError();
     setPasswordError('');
     setPasswordSaved(false);
 
@@ -43,8 +88,8 @@ export default function SettingsPage() {
       setPasswordError('请填写所有密码字段');
       return;
     }
-    if (newPassword.length < 6) {
-      setPasswordError('新密码至少6个字符');
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      setPasswordError(`新密码至少${MIN_PASSWORD_LENGTH}个字符`);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -52,45 +97,17 @@ export default function SettingsPage() {
       return;
     }
 
-    // TODO: 调用后端修改密码API
+    const saved = await changePassword({
+      oldPassword: currentPassword,
+      newPassword,
+    });
+    if (!saved) return;
+
     setPasswordSaved(true);
     setCurrentPassword('');
     setNewPassword('');
     setConfirmPassword('');
     setTimeout(() => setPasswordSaved(false), 2000);
-  };
-
-  const handleThemeChange = (newTheme: Theme) => {
-    setTheme(newTheme);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('deepagent_theme', newTheme);
-      const root = document.documentElement;
-      if (newTheme === 'light') {
-        root.classList.remove('dark');
-      } else if (newTheme === 'dark') {
-        root.classList.add('dark');
-      } else {
-        // system mode: detect system preference
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        if (prefersDark) {
-          root.classList.add('dark');
-        } else {
-          root.classList.remove('dark');
-        }
-        // Listen for system theme changes
-        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-        const handler = (e: MediaQueryListEvent) => {
-          if (localStorage.getItem('deepagent_theme') === 'system') {
-            if (e.matches) {
-              root.classList.add('dark');
-            } else {
-              root.classList.remove('dark');
-            }
-          }
-        };
-        mediaQuery.addEventListener('change', handler);
-      }
-    }
   };
 
   return (
@@ -102,6 +119,13 @@ export default function SettingsPage() {
           管理你的账户和平台配置
         </p>
       </div>
+
+      {/* Error banner */}
+      {storeError && (
+        <div className="px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-400">
+          {storeError}
+        </div>
+      )}
 
       {/* Profile Settings */}
       <Card>
@@ -139,7 +163,9 @@ export default function SettingsPage() {
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <Button onClick={handleSaveProfile}>保存资料</Button>
+              <Button onClick={handleSaveProfile} disabled={isLoading}>
+                保存资料
+              </Button>
               {profileSaved && (
                 <span className="text-sm text-green-400">已保存</span>
               )}
@@ -172,7 +198,7 @@ export default function SettingsPage() {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="至少6个字符"
+                placeholder={`至少${MIN_PASSWORD_LENGTH}个字符`}
                 className="w-full max-w-md rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
@@ -191,10 +217,9 @@ export default function SettingsPage() {
               <p className="text-sm text-red-400">{passwordError}</p>
             )}
             <div className="flex items-center gap-3">
-              <Button onClick={handleChangePassword} disabled>
-                修改密码（开发中）
+              <Button onClick={handleChangePassword} disabled={isLoading}>
+                修改密码
               </Button>
-              <p className="text-xs text-zinc-500 mt-1">密码修改功能需要后端API支持</p>
               {passwordSaved && (
                 <span className="text-sm text-green-400">密码已修改</span>
               )}

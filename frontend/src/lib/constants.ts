@@ -15,6 +15,8 @@ export const API_ENDPOINTS = {
     REFRESH: '/auth/refresh',
     LOGOUT: '/auth/logout',
     ME: '/auth/me',
+    PROFILE: '/auth/profile',
+    CHANGE_PASSWORD: '/auth/change-password',
   },
   PROJECTS: {
     LIST: '/projects',
@@ -29,6 +31,7 @@ export const API_ENDPOINTS = {
   AGENTS: {
     LIST: '/agents',
     DETAIL: (agentId: string) => `/agents/${agentId}`,
+    EXECUTE: (agentId: string) => `/agents/${agentId}/execute`,
     CHAT: (agentId: string) => `/agents/${agentId}/chat`,
     CHAT_STREAM: (agentId: string) => `/agents/${agentId}/chat/stream`,
     THINKING_CHAIN: (agentId: string) => `/agents/${agentId}/thinking-chain`,
@@ -39,8 +42,12 @@ export const API_ENDPOINTS = {
   WORKFLOWS: {
     LIST: '/workflows',
     DETAIL: (id: string) => `/workflows/${id}`,
+    UPDATE: (id: string) => `/workflows/${id}`,
     EXECUTE: (id: string) => `/workflows/${id}/execute`,
     TEMPLATES: '/workflows/templates',
+  },
+  TASKS: {
+    DETAIL: (taskId: string) => `/tasks/${taskId}`,
   },
 } as const;
 
@@ -105,6 +112,9 @@ export const AGENT_TYPE_META: Record<
   reviewer: { label: 'Reviewer', color: '#f59e0b', icon: 'Search' },
   tester: { label: 'Tester', color: '#22c55e', icon: 'TestTube' },
   deployer: { label: 'Deployer', color: '#ef4444', icon: 'Rocket' },
+  planner: { label: 'Planner', color: '#06b6d4', icon: 'ListChecks' },
+  trigger: { label: 'Trigger', color: '#a855f7', icon: 'Zap' },
+  custom: { label: 'Custom', color: '#94a3b8', icon: 'Settings' },
 };
 
 // Agent status metadata
@@ -130,4 +140,5 @@ export const STORAGE_KEYS = {
   REFRESH_TOKEN: 'deepagent_refresh_token',
   THEME: 'deepagent_theme',
   SIDEBAR_COLLAPSED: 'deepagent_sidebar_collapsed',
+  REMEMBERED_USERNAME: 'deepagent_remembered_username',
 } as const;

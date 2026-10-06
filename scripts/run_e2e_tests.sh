@@ -56,10 +56,19 @@ echo "-----------------------------------------"
 if [ -d "${PROJECT_ROOT}/agent-runtime" ]; then
     cd "${PROJECT_ROOT}/agent-runtime"
 
+    # Prefer the project virtualenv: the system interpreter usually does not have
+    # the agent-runtime dependencies installed.
+    if [ -x ".venv/bin/python" ]; then
+        PYTHON_CMD=".venv/bin/python"
+    else
+        PYTHON_CMD="python"
+    fi
+
     # Check if pytest is available
-    if command -v python &> /dev/null && python -m pytest --version &> /dev/null; then
-        # Run integration tests and API contract tests
-        if python -m pytest tests/test_integration.py tests/test_api_contracts.py -v --tb=short -m "not slow"; then
+    if command -v "${PYTHON_CMD}" &> /dev/null && "${PYTHON_CMD}" -m pytest --version &> /dev/null; then
+        # test_performance.py asserts machine-dependent timings, so it is excluded
+        # from the e2e gate (run it explicitly when needed).
+        if "${PYTHON_CMD}" -m pytest tests/ --ignore=tests/test_performance.py -v --tb=short -m "not slow"; then
             echo -e "${GREEN}[2/4] Agent Runtime tests PASSED${NC}"
         else
             echo -e "${RED}[2/4] Agent Runtime tests FAILED${NC}"

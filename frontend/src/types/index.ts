@@ -22,8 +22,10 @@ export interface RegisterRequest {
 }
 
 export interface AuthResponse {
-  accessToken: string;
-  refreshToken: string;
+  // /auth/me returns these as null (AuthResponse is @JsonInclude(NON_NULL)),
+  // so callers must not assume a token is present.
+  accessToken: string | null;
+  refreshToken: string | null;
   tokenType: string;
   expiresIn: number;
   username: string;

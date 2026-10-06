@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.models.schemas import SearchRequest, SearchResponse, SearchResult
 from app.services.vector_service import VectorService
@@ -11,12 +11,20 @@ from app.services.vector_service import VectorService
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Global vector service instance
+# Global vector service instance (fallback for callers without a lifespan)
 _vector_service: VectorService | None = None
 
 
-async def get_vector_service() -> VectorService:
-    """Get or create the vector service instance."""
+async def get_vector_service(request: Request) -> VectorService:
+    """Get or create the vector service instance.
+
+    Prefers the instance created during application startup so the lifespan
+    client (native engine included) is actually reused, and only falls back to a
+    lazily created singleton when no lifespan ran (for example in unit tests).
+    """
+    service = getattr(request.app.state, "vector_service", None)
+    if service is not None:
+        return service
     global _vector_service
     if _vector_service is None:
         _vector_service = VectorService()
@@ -64,13 +72,16 @@ async def semantic_search(
             total=len(search_results),
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Semantic search failed: %s", str(e))
-        return SearchResponse(
-            query=request.query,
-            results=[],
-            total=0,
-        )
+        # Never answer 200 with an empty result on failure: the caller could not
+        # distinguish "no matches" from "the vector engine is down".
+        logger.exception("Semantic search failed: %s", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Semantic search is unavailable: the vector engine could not be reached",
+        ) from e
 
 
 @router.post("/index", status_code=201)
@@ -96,5 +107,9 @@ async def index_documents(
         )
         return {"status": "indexed", "count": str(count)}
     except Exception as e:
-        logger.error("Indexing failed: %s", str(e))
-        return {"status": "failed", "count": "0"}
+        # A failed index must not be reported as a successful 201 response.
+        logger.exception("Indexing failed: %s", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Indexing is unavailable: the vector engine could not be reached",
+        ) from e

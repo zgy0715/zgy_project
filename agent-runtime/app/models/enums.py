@@ -10,7 +10,6 @@ class AgentType(str, Enum):
     REVIEWER = "reviewer"
     TESTER = "tester"
     DEPLOYER = "deployer"
-    COORDINATOR = "coordinator"
 
 
 class TaskStatus(str, Enum):

@@ -57,9 +57,6 @@ private:
         std::string_view source, std::string_view language) const;
     [[nodiscard]] std::vector<CodeToken> tokenize_by_line(
         std::string_view source, std::string_view language) const;
-
-    /// Count the number of newlines in [begin, end).
-    static int count_lines(std::string_view sv);
 };
 
 } // namespace deepagent::vector_engine

@@ -5,7 +5,6 @@ and improve response times for frequently accessed resources.
 """
 
 import hashlib
-import json
 import time
 from collections import OrderedDict
 from typing import Any, Optional
@@ -96,7 +95,6 @@ class CacheMiddleware(BaseHTTPMiddleware):
         "/ready": 10,                   # Readiness check: 10s
         "/api/v1/agents/": 60,         # Agent detail: 60s
         "/api/v1/workflows/": 60,      # Workflow detail: 60s
-        "/api/v1/agents/": 60,         # Agent messages/thinking-chain: 60s
     }
 
     # Routes that should NOT be cached (write/mutation paths)
@@ -105,6 +103,12 @@ class CacheMiddleware(BaseHTTPMiddleware):
         "/execute",
         "/stream",
         "/index",
+    }
+
+    # Path substrings identifying SSE / streaming endpoints. Such responses
+    # must never be buffered: doing so would defeat incremental streaming.
+    STREAM_PATHS: set[str] = {
+        "/chat/stream",
     }
 
     def __init__(self, app, max_size: int = 1000, default_ttl: int = 60):
@@ -140,10 +144,19 @@ class CacheMiddleware(BaseHTTPMiddleware):
         # Call next middleware/handler
         response = await call_next(request)
 
+        # Never buffer streaming / SSE responses — pass them through
+        # untouched, without an X-Cache header.
+        if self._is_streaming(path, response):
+            return response
+
         # Only cache successful responses
         if response.status_code == 200:
             body = b""
             async for chunk in response.body_iterator:
+                # Streaming responses may yield str or bytes chunks;
+                # normalize to bytes so concatenation always succeeds.
+                if isinstance(chunk, str):
+                    chunk = chunk.encode(response.charset or "utf-8")
                 body += chunk
 
             ttl = self._get_ttl(path)
@@ -198,6 +211,25 @@ class CacheMiddleware(BaseHTTPMiddleware):
     def _should_skip(self, path: str) -> bool:
         """Check if a path should skip caching."""
         return any(nc in path for nc in self.NO_CACHE_PATHS)
+
+    def _is_streaming(self, path: str, response: Response) -> bool:
+        """Check whether a response is streaming and must bypass buffering.
+
+        Buffering the whole body of an SSE / streaming response would
+        defeat incremental delivery, so such responses are returned
+        untouched (and never cached).
+
+        Args:
+            path: The request path.
+            response: The downstream response.
+
+        Returns:
+            True if the response should be passed through unbuffered.
+        """
+        if any(sp in path for sp in self.STREAM_PATHS):
+            return True
+        content_type = response.headers.get("content-type", "")
+        return "text/event-stream" in content_type.lower()
 
     def invalidate(self, prefix: str = "") -> int:
         """Invalidate cache entries matching a prefix. Returns count removed."""

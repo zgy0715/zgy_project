@@ -91,13 +91,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     /**
      * Checks if the token has been revoked via the Redis blacklist.
      *
+     * <p>Redis 不可用时按"未撤销"处理（fail-open）并打 WARN：黑名单只影响已登出的
+     * 令牌，令牌本身的签名与过期时间已在上面校验过；若让异常冒泡，一次 Redis 抖动
+     * 就会让所有带令牌的请求返回 500。运维需要关注该 WARN 日志。</p>
+     *
      * @param token the JWT token
      * @return true if the token is revoked
      */
     private boolean isTokenRevoked(String token) {
-        var tokenId = jwtTokenProvider.getTokenId(token);
-        var key = TOKEN_BLACKLIST_PREFIX + tokenId;
-        return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        try {
+            var tokenId = jwtTokenProvider.getTokenId(token);
+            var key = TOKEN_BLACKLIST_PREFIX + tokenId;
+            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        } catch (Exception e) {
+            log.warn("Token blacklist check failed ({}); treating the token as not revoked. "
+                    + "Revocation cannot be enforced while Redis is unavailable.", e.getMessage());
+            return false;
+        }
     }
 
     /**

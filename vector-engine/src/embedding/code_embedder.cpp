@@ -1,13 +1,40 @@
 #include "embedding/code_embedder.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <numeric>
-#include <random>
 #include <utility>
 
 #include "utils/thread_pool.h"
 
 namespace deepagent::vector_engine {
+
+namespace {
+
+/// FNV-1a 64-bit hash. std::hash is implementation defined, so using it would
+/// make the stub embeddings differ between compilers/processes and break
+/// comparisons of persisted vectors.
+uint64_t fnv1a(std::string_view text) {
+    uint64_t hash = 1469598103934665603ull; // FNV offset basis
+    for (unsigned char c : text) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= 1099511628211ull;           // FNV prime
+    }
+    return hash;
+}
+
+/// splitmix64: tiny, fully portable PRNG, so the dummy embedding is identical
+/// on every platform and STL implementation.
+uint64_t splitmix64(uint64_t& state) {
+    state += 0x9E3779B97F4A7C15ull;
+    uint64_t z = state;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+} // namespace
 
 // ── CodeEmbedder::Impl ──────────────────────────────────────────────────────
 
@@ -16,9 +43,14 @@ public:
     explicit Impl(const EmbedderConfig& config)
         : config_(config)
         , tokenizer_(config.split_strategy)
-        , rng_(std::random_device{}())
-        , pool_(std::thread::hardware_concurrency())
-    {}
+    {
+        // Only backends that do real work get a thread pool; the stub backend
+        // has nothing to parallelize and must not spawn threads.
+        if (config_.backend != EmbedderBackend::Dummy) {
+            const unsigned hw = std::thread::hardware_concurrency();
+            pool_ = std::make_unique<ThreadPool>(std::max(1u, hw));
+        }
+    }
 
     std::vector<float> embed(std::string_view text) const {
         switch (config_.backend) {
@@ -40,8 +72,9 @@ public:
         const std::size_t n = texts.size();
         if (n == 0) return {};
 
-        // For small batches, serial execution avoids thread pool overhead
-        if (n < 4) {
+        // For small batches (or when there is no pool) serial execution avoids
+        // thread pool overhead
+        if (n < 4 || !pool_) {
             std::vector<std::vector<float>> results;
             results.reserve(n);
             for (const auto& text : texts) {
@@ -55,7 +88,7 @@ public:
         futures.reserve(n);
 
         for (std::size_t i = 0; i < n; ++i) {
-            futures.push_back(pool_.submit([this, text = texts[i]]() {
+            futures.push_back(pool_->submit([this, text = texts[i]]() {
                 return embed(text);
             }));
         }
@@ -78,12 +111,12 @@ public:
         }
 
         // Parallel embedding for token chunks
-        if (n >= 4) {
+        if (n >= 4 && pool_) {
             std::vector<std::future<std::vector<float>>> futures;
             futures.reserve(n);
 
             for (std::size_t i = 0; i < n; ++i) {
-                futures.push_back(pool_.submit([this, text = tokens[i].text]() {
+                futures.push_back(pool_->submit([this, text = tokens[i].text]() {
                     return embed(text);
                 }));
             }
@@ -109,18 +142,18 @@ public:
     const EmbedderConfig& config() const { return config_; }
 
 private:
-    /// Dummy embedding: hash-based pseudo-random vector, then L2-normalize.
-    /// Useful for testing the pipeline without a real model.
+    /// Dummy embedding: deterministic hash-based pseudo-random vector, then
+    /// L2-normalize. Useful for testing the pipeline without a real model.
+    /// The same text always maps to the same vector, on every platform.
     std::vector<float> dummy_embed(std::string_view text) const {
         std::vector<float> vec(config_.dim, 0.0f);
 
-        // Simple hash-based seeding for deterministic-ish output
-        std::size_t h = std::hash<std::string_view>{}(text);
-        std::mt19937 gen(static_cast<unsigned>(h));
-        std::normal_distribution<float> dist(0.0f, 1.0f);
-
+        uint64_t state = fnv1a(text);
         for (auto& v : vec) {
-            v = dist(gen);
+            // Map the top 53 bits to [0, 1) and then to [-1, 1).
+            const double unit = static_cast<double>(splitmix64(state) >> 11) *
+                                (1.0 / 9007199254740992.0);
+            v = static_cast<float>(unit * 2.0 - 1.0);
         }
 
         // L2 normalize
@@ -134,8 +167,9 @@ private:
 
     EmbedderConfig config_;
     Tokenizer      tokenizer_;
-    std::mt19937   rng_;
-    mutable ThreadPool pool_;   // Thread pool for parallel batch embedding
+    /// Only allocated for backends that actually compute; null means "run the
+    /// batch serially" (see the constructor).
+    std::unique_ptr<ThreadPool> pool_;
 };
 
 // ── CodeEmbedder forwarding ─────────────────────────────────────────────────

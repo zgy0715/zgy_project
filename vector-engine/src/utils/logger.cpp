@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -61,7 +62,12 @@ static const char* level_string(LogLevel level) {
 }
 
 void Logger::log(LogLevel level, std::string_view tag, std::string_view message) const {
-    if (level < impl_->level) return;
+    // Read the threshold under the lock: `level` is mutated by set_level() from
+    // other threads, and reading it unsynchronized would be a data race.
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        if (level < impl_->level) return;
+    }
 
     // Get timestamp
     auto now = std::chrono::system_clock::now();

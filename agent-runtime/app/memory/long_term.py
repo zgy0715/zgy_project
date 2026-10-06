@@ -2,7 +2,6 @@
 
 import logging
 import uuid
-from typing import Any
 
 from app.memory.base import BaseMemory
 from app.models.schemas import Message

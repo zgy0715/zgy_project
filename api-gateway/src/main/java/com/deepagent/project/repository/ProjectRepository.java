@@ -31,4 +31,22 @@ public interface ProjectRepository extends JpaRepository<Project, Long> {
      * @return list of matching projects
      */
     List<Project> findByOwnerIdAndStatus(Long ownerId, Project.Status status);
+
+    /**
+     * Finds a project by ID scoped to its owner (prevents IDOR).
+     *
+     * @param id      the project ID
+     * @param ownerId the owner's user ID
+     * @return the project if it exists and belongs to the owner
+     */
+    java.util.Optional<Project> findByIdAndOwnerId(Long id, Long ownerId);
+
+    /**
+     * Checks whether a project exists and belongs to the given owner.
+     *
+     * @param id      the project ID
+     * @param ownerId the owner's user ID
+     * @return true when the project exists and is owned by the user
+     */
+    boolean existsByIdAndOwnerId(Long id, Long ownerId);
 }

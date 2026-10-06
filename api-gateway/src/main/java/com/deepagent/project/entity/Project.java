@@ -10,8 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -22,10 +23,14 @@ import java.time.LocalDateTime;
  *
  * <p>A project is the top-level organizational unit that groups related
  * agent tasks, DAG workflows, and configurations together.</p>
+ *
+ * <p>使用 {@code @Getter}/{@code @Setter} 而非 {@code @Data}：避免基于全部字段的
+ * {@code equals}/{@code hashCode}（实体应用身份比较）与无意义的 {@code toString()}。</p>
  */
 @Entity
 @Table(name = "projects")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor

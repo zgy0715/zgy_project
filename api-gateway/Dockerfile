@@ -41,13 +41,15 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD wget -qO- http://localhost:8080/actuator/health || exit 1
 
+# Activate the production profile (no dev defaults, required env vars enforced)
+ENV SPRING_PROFILES_ACTIVE=prod
+
 # JVM options for containerized environment
 ENV JAVA_OPTS="-XX:+UseZGC \
                -XX:+ZGenerational \
                -XX:MaxRAMPercentage=75.0 \
                -XX:+UseStringDeduplication \
-               -Djava.security.egd=file:/dev/./urandom \
-               --enable-preview"
+               -Djava.security.egd=file:/dev/./urandom"
 
 # Entry point
 ENTRYPOINT ["sh", "-c", "java ${JAVA_OPTS} -jar app.jar"]

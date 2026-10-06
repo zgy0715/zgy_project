@@ -1,9 +1,12 @@
-﻿package com.deepagent.orchestrator.controller;
+package com.deepagent.orchestrator.controller;
 
-import com.deepagent.auth.entity.User;
 import com.deepagent.common.exception.BusinessException;
 import com.deepagent.common.response.ApiResponse;
+import com.deepagent.common.util.PrincipalUtils;
 import com.deepagent.orchestrator.client.AgentRestClient;
+import com.deepagent.orchestrator.dto.AgentResponse;
+import com.deepagent.orchestrator.entity.AgentOwnership;
+import com.deepagent.orchestrator.repository.AgentOwnershipRepository;
 import com.deepagent.orchestrator.service.AgentOrchestrator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,21 +18,28 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * REST controller for agent management and execution endpoints.
  *
- * <p>All endpoints require JWT authentication. Agent ownership is tracked
- * via a local map (mapping agentId -> userId) to ensure users can only
- * access their own agents.</p>
+ * <p>All endpoints require JWT authentication. Agent ownership is persisted in the
+ * {@code agent_ownership} table (V2 migration) and every agent-scoped endpoint
+ * verifies ownership before calling agent-runtime. Unknown agents are denied
+ * (fail-closed) instead of being allowed through.</p>
  */
 @Slf4j
 @RestController
@@ -39,48 +49,120 @@ public class AgentController {
 
     private final AgentRestClient agentRestClient;
     private final AgentOrchestrator agentOrchestrator;
-
-    // In-memory agent ownership tracking: agentId -> userId
-    // In a production environment, this should be moved to a database
-    private final ConcurrentHashMap<String, Long> agentOwnership = new ConcurrentHashMap<>();
+    private final AgentOwnershipRepository agentOwnershipRepository;
 
     @PostMapping
     public ResponseEntity<ApiResponse<Map>> createAgent(
             @RequestBody Map<String, Object> request,
             @AuthenticationPrincipal UserDetails userDetails) {
+        var ownerId = PrincipalUtils.requireUserId(userDetails);
         log.info("Creating agent: name={}, user={}", request.get("name"), userDetails.getUsername());
 
-        var ownerId = extractUserId(userDetails);
         // Tag the agent with owner info via metadata
         request.put("owner_id", String.valueOf(ownerId));
 
         var result = agentRestClient.createAgent(request).block();
-        if (result != null && result.containsKey("id")) {
-            String agentId = String.valueOf(result.get("id"));
-            agentOwnership.put(agentId, ownerId);
+        if (result != null && result.get("id") != null) {
+            var agentId = String.valueOf(result.get("id"));
+            // 归属持久化：重启/多实例后依然可校验
+            agentOwnershipRepository.save(new AgentOwnership(agentId, ownerId, null));
         }
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 
+    /**
+     * 列出当前用户拥有的 Agent（data 为 JSON 数组，且只包含自己的 Agent）。
+     */
     @GetMapping
-    public ResponseEntity<ApiResponse<Map>> listAgents(
+    public ResponseEntity<ApiResponse<List<AgentResponse>>> listAgents(
             @RequestParam(required = false) String agentType,
             @RequestParam(required = false) String statusFilter,
             @AuthenticationPrincipal UserDetails userDetails) {
+        var userId = PrincipalUtils.requireUserId(userDetails);
         log.debug("Listing agents: agentType={}, statusFilter={}, user={}",
                 agentType, statusFilter, userDetails.getUsername());
+
+        var ownedAgentIds = ownedAgentIds(userId);
         var result = agentRestClient.listAgents(agentType, statusFilter).block();
-        return ResponseEntity.ok(ApiResponse.success(result));
+
+        var agents = new ArrayList<AgentResponse>();
+        if (result != null) {
+            for (var raw : result) {
+                var agentId = raw.get("id") == null ? null : String.valueOf(raw.get("id"));
+                if (agentId != null && ownedAgentIds.contains(agentId)) {
+                    agents.add(toAgentResponse(raw));
+                }
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.success(agents));
     }
 
     @GetMapping("/{agentId}")
-    public ResponseEntity<ApiResponse<Map>> getAgent(
+    public ResponseEntity<ApiResponse<AgentResponse>> getAgent(
             @PathVariable String agentId,
             @AuthenticationPrincipal UserDetails userDetails) {
         log.debug("Getting agent: agentId={}, user={}", agentId, userDetails.getUsername());
         verifyAgentOwnership(agentId, userDetails);
         var result = agentRestClient.getAgent(agentId).block();
+        return ResponseEntity.ok(ApiResponse.success(toAgentResponse(result)));
+    }
+
+    /**
+     * 更新 Agent 元信息（name/description/agentType/config），需要归属校验。
+     */
+    @PutMapping("/{agentId}")
+    public ResponseEntity<ApiResponse<AgentResponse>> updateAgent(
+            @PathVariable String agentId,
+            @RequestBody Map<String, Object> request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Updating agent: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
+
+        var payload = new LinkedHashMap<String, Object>();
+        if (request.get("name") != null) {
+            payload.put("name", request.get("name"));
+        }
+        if (request.get("description") != null) {
+            payload.put("description", request.get("description"));
+        }
+        var agentType = request.get("agentType") != null ? request.get("agentType") : request.get("agent_type");
+        if (agentType != null) {
+            payload.put("agent_type", agentType);
+        }
+        if (request.get("config") != null) {
+            payload.put("config", request.get("config"));
+        }
+
+        var updated = agentRestClient.updateAgent(agentId, payload).block();
+        return ResponseEntity.ok(ApiResponse.success(
+                toAgentResponse(updated), "Agent updated successfully"));
+    }
+
+    /**
+     * 读取 Agent 配置（需要归属校验）。
+     */
+    @GetMapping("/{agentId}/config")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getAgentConfig(
+            @PathVariable String agentId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.debug("Getting agent config: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
+        var result = agentRestClient.getAgentConfig(agentId).block();
         return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    /**
+     * 更新 Agent 配置（需要归属校验）。
+     */
+    @PutMapping("/{agentId}/config")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateAgentConfig(
+            @PathVariable String agentId,
+            @RequestBody Map<String, Object> config,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        log.info("Updating agent config: agentId={}, user={}", agentId, userDetails.getUsername());
+        verifyAgentOwnership(agentId, userDetails);
+        var result = agentRestClient.updateAgentConfig(agentId, config).block();
+        return ResponseEntity.ok(ApiResponse.success(result, "Agent config updated successfully"));
     }
 
     @PostMapping("/{agentId}/execute")
@@ -144,7 +226,7 @@ public class AgentController {
     }
 
     @GetMapping("/{agentId}/messages")
-    public ResponseEntity<ApiResponse<Map>> getMessages(
+    public ResponseEntity<ApiResponse<Object>> getMessages(
             @PathVariable String agentId,
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) Integer offset,
@@ -172,36 +254,56 @@ public class AgentController {
         log.info("Deleting agent: agentId={}, user={}", agentId, userDetails.getUsername());
         verifyAgentOwnership(agentId, userDetails);
         agentRestClient.deleteAgent(agentId).block();
-        agentOwnership.remove(agentId);
+        agentOwnershipRepository.findByAgentId(agentId).ifPresent(agentOwnershipRepository::delete);
         return ResponseEntity.ok(ApiResponse.success(null, "Agent deleted successfully"));
     }
 
     /**
-     * Verifies that the authenticated user owns the specified agent.
-     * Falls back to allowing access if ownership is not yet tracked
-     * (e.g., agents created before this update).
+     * 校验当前用户是否拥有该 Agent。
+     *
+     * <p>fail-closed：查不到归属记录时直接拒绝，而不是放行。历史上放行是为了兼容
+     * 进程重启前创建的 Agent，但归属表已持久化，这种放行只会变成越权漏洞。</p>
      */
     private void verifyAgentOwnership(String agentId, UserDetails userDetails) {
-        Long ownerId = agentOwnership.get(agentId);
-        if (ownerId != null) {
-            Long userId = extractUserId(userDetails);
-            if (!ownerId.equals(userId)) {
-                throw new BusinessException("Access denied: you do not own this agent");
-            }
-        }
-        // If ownership not tracked (legacy agents), allow access
-        // but log a warning for auditing
-        if (ownerId == null) {
-            log.warn("Agent {} has no tracked owner, allowing access for user {}",
-                    agentId, userDetails.getUsername());
+        var userId = PrincipalUtils.requireUserId(userDetails);
+        if (!agentOwnershipRepository.existsByAgentIdAndOwnerId(agentId, userId)) {
+            log.warn("Access denied: user {} does not own agent {}", userId, agentId);
+            throw new BusinessException("Access denied: you do not own this agent");
         }
     }
 
-    private Long extractUserId(UserDetails userDetails) {
-        if (userDetails instanceof User user) {
-            return user.getId();
+    private Set<String> ownedAgentIds(Long userId) {
+        return agentOwnershipRepository.findByOwnerId(userId).stream()
+                .map(AgentOwnership::getAgentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+    }
+
+    private AgentResponse toAgentResponse(Map<String, Object> agent) {
+        if (agent == null) {
+            return null;
         }
-        throw new IllegalStateException("Unexpected principal type: " + userDetails.getClass().getName());
+        var agentType = agent.get("agent_type") != null ? agent.get("agent_type") : agent.get("agentType");
+        return new AgentResponse(
+                asString(agent.get("id")),
+                asString(agent.get("name")),
+                asString(agent.get("description")),
+                asString(agentType),
+                asString(agent.get("status")),
+                asMap(agent.get("config")),
+                asString(agent.get("owner_id")),
+                asString(agent.get("created_at")),
+                asString(agent.get("updated_at"))
+        );
+    }
+
+    private String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> asMap(Object value) {
+        return value instanceof Map<?, ?> map ? (Map<String, Object>) map : null;
     }
 
     private Long extractLong(Object value) {

@@ -5,6 +5,61 @@
 
 namespace deepagent::vector_engine {
 
+namespace {
+
+/// Maps byte offsets to 1-based line numbers in O(log n) after a single O(n)
+/// scan of the source. The previous implementation re-counted newlines over a
+/// growing prefix on every lookup, which made tokenizing O(n^2).
+class LineIndex {
+public:
+    explicit LineIndex(std::string_view source) {
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            if (source[i] == '\n') {
+                newlines_.push_back(i);
+            }
+        }
+    }
+
+    /// 1-based line number containing @p offset.
+    [[nodiscard]] int line_of(std::size_t offset) const {
+        return static_cast<int>(
+            std::lower_bound(newlines_.begin(), newlines_.end(), offset) - newlines_.begin()) + 1;
+    }
+
+private:
+    std::vector<std::size_t> newlines_;
+};
+
+/// Offset of the first non-whitespace character at or after @p offset.
+std::size_t first_non_space(std::string_view source, std::size_t offset) {
+    while (offset < source.size() &&
+           (source[offset] == ' ' || source[offset] == '\t' ||
+            source[offset] == '\r' || source[offset] == '\n')) {
+        ++offset;
+    }
+    return offset;
+}
+
+/// Line of the last character of [start, end) — never before the start line.
+int end_line_of(const LineIndex& index, std::size_t start, std::size_t end) {
+    const int start_line = index.line_of(start);
+    if (end <= start) return start_line;
+    return std::max(start_line, index.line_of(end - 1));
+}
+
+/// Extract a human readable name from a regex match: strip everything from the
+/// opening brace and keep the last identifier.
+std::string name_from_match(const std::string& matched) {
+    std::string name = matched;
+    auto brace_idx = name.find('{');
+    if (brace_idx != std::string::npos) name.resize(brace_idx);
+    auto last_space = name.find_last_of(" \t\n");
+    if (last_space != std::string::npos) name = name.substr(last_space + 1);
+    return name;
+}
+
+} // namespace
+
 Tokenizer::Tokenizer(SplitStrategy strategy)
     : strategy_(strategy) {}
 
@@ -22,19 +77,19 @@ std::vector<CodeToken> Tokenizer::tokenize(
     return {};
 }
 
-int Tokenizer::count_lines(std::string_view sv) {
-    return static_cast<int>(std::count(sv.begin(), sv.end(), '\n')) + 1;
-}
-
 // ── ByFunction ──────────────────────────────────────────────────────────────
 std::vector<CodeToken> Tokenizer::tokenize_by_function(
     std::string_view source, std::string_view language) const
 {
     std::vector<CodeToken> tokens;
-    // Simplified regex-based function detection for C-family languages
+    const LineIndex lines(source);
+
+    // Simplified regex-based function detection for C-family languages.
+    // The template-argument group tolerates one level of nesting, so
+    // "std::map<int, std::vector<int>> foo()" is recognized.
     static const std::regex func_regex(
-        R"((?:^|\n)\s*(?:(?:inline|static|virtual|const|constexpr)\s+)*"
-        R"(\w[\w:]*(?:\s*<[^>]*>)?\s+\w+\s*\([^)]*\)\s*(?:const|override|final)*\s*\{)",
+        R"((?:^|\n)\s*(?:(?:inline|static|virtual|const|constexpr)\s+)*)"
+        R"(\w[\w:]*(?:\s*<(?:[^<>]|<[^<>]*>)*>)?\s+\w+\s*\([^)]*\)\s*(?:const|override|final)*\s*\{)",
         std::regex::optimize);
 
     std::string src(source);
@@ -46,12 +101,11 @@ std::vector<CodeToken> Tokenizer::tokenize_by_function(
         auto pos = static_cast<std::size_t>(it->position());
         if (pos > last_pos) {
             // Text before this function
-            auto prefix = source.substr(last_pos, pos - last_pos);
             CodeToken tok;
-            tok.text       = std::string(prefix);
+            tok.text       = std::string(source.substr(last_pos, pos - last_pos));
             tok.language   = std::string(language);
-            tok.start_line = count_lines(source.substr(0, last_pos));
-            tok.end_line   = count_lines(source.substr(0, pos)) - 1;
+            tok.start_line = lines.line_of(last_pos);
+            tok.end_line   = end_line_of(lines, last_pos, pos);
             tok.name       = "(preamble)";
             tokens.push_back(std::move(tok));
         }
@@ -68,20 +122,17 @@ std::vector<CodeToken> Tokenizer::tokenize_by_function(
             ++i;
         }
 
+        // Line numbers are reported for the first declaration token, so a
+        // match that starts on the preceding newline does not shift the range.
+        const std::size_t text_start = first_non_space(source, pos);
+
         CodeToken tok;
         tok.text       = std::string(source.substr(pos, i - pos));
         tok.language   = std::string(language);
-        tok.start_line = count_lines(source.substr(0, pos));
-        tok.end_line   = count_lines(source.substr(0, i));
+        tok.start_line = lines.line_of(text_start);
+        tok.end_line   = end_line_of(lines, text_start, i);
         // Extract function name from match
-        std::smatch m = *it;
-        tok.name       = m.str();
-        // Trim trailing brace and whitespace from name
-        auto brace_idx = tok.name.find('{');
-        if (brace_idx != std::string::npos) tok.name.resize(brace_idx);
-        // Keep only the last word as function name
-        auto last_space = tok.name.find_last_of(" \t\n");
-        if (last_space != std::string::npos) tok.name = tok.name.substr(last_space + 1);
+        tok.name       = name_from_match(it->str());
 
         tokens.push_back(std::move(tok));
         last_pos = i;
@@ -93,8 +144,8 @@ std::vector<CodeToken> Tokenizer::tokenize_by_function(
         CodeToken tok;
         tok.text       = std::string(source.substr(last_pos));
         tok.language   = std::string(language);
-        tok.start_line = count_lines(source.substr(0, last_pos));
-        tok.end_line   = count_lines(source);
+        tok.start_line = lines.line_of(last_pos);
+        tok.end_line   = end_line_of(lines, last_pos, source.size());
         tok.name       = "(epilogue)";
         tokens.push_back(std::move(tok));
     }
@@ -107,6 +158,8 @@ std::vector<CodeToken> Tokenizer::tokenize_by_class(
     std::string_view source, std::string_view language) const
 {
     std::vector<CodeToken> tokens;
+    const LineIndex lines(source);
+
     static const std::regex class_regex(
         R"((?:^|\n)\s*(?:class|struct)\s+\w+[^{]*\{)",
         std::regex::optimize);
@@ -123,8 +176,8 @@ std::vector<CodeToken> Tokenizer::tokenize_by_class(
             CodeToken tok;
             tok.text       = std::string(source.substr(last_pos, pos - last_pos));
             tok.language   = std::string(language);
-            tok.start_line = count_lines(source.substr(0, last_pos));
-            tok.end_line   = count_lines(source.substr(0, pos)) - 1;
+            tok.start_line = lines.line_of(last_pos);
+            tok.end_line   = end_line_of(lines, last_pos, pos);
             tok.name       = "(non-class)";
             tokens.push_back(std::move(tok));
         }
@@ -143,17 +196,14 @@ std::vector<CodeToken> Tokenizer::tokenize_by_class(
         // Skip trailing semicolon
         if (i < source.size() && source[i] == ';') ++i;
 
+        const std::size_t text_start = first_non_space(source, pos);
+
         CodeToken tok;
         tok.text       = std::string(source.substr(pos, i - pos));
         tok.language   = std::string(language);
-        tok.start_line = count_lines(source.substr(0, pos));
-        tok.end_line   = count_lines(source.substr(0, i));
-        std::smatch m = *it;
-        tok.name       = m.str();
-        auto brace_idx = tok.name.find('{');
-        if (brace_idx != std::string::npos) tok.name.resize(brace_idx);
-        auto last_space = tok.name.find_last_of(" \t\n");
-        if (last_space != std::string::npos) tok.name = tok.name.substr(last_space + 1);
+        tok.start_line = lines.line_of(text_start);
+        tok.end_line   = end_line_of(lines, text_start, i);
+        tok.name       = name_from_match(it->str());
 
         tokens.push_back(std::move(tok));
         last_pos = i;
@@ -164,8 +214,8 @@ std::vector<CodeToken> Tokenizer::tokenize_by_class(
         CodeToken tok;
         tok.text       = std::string(source.substr(last_pos));
         tok.language   = std::string(language);
-        tok.start_line = count_lines(source.substr(0, last_pos));
-        tok.end_line   = count_lines(source);
+        tok.start_line = lines.line_of(last_pos);
+        tok.end_line   = end_line_of(lines, last_pos, source.size());
         tok.name       = "(epilogue)";
         tokens.push_back(std::move(tok));
     }
@@ -178,6 +228,7 @@ std::vector<CodeToken> Tokenizer::tokenize_by_block(
     std::string_view source, std::string_view language) const
 {
     std::vector<CodeToken> tokens;
+    const LineIndex lines(source);
     std::size_t i = 0;
 
     while (i < source.size()) {
@@ -195,8 +246,8 @@ std::vector<CodeToken> Tokenizer::tokenize_by_block(
             CodeToken tok;
             tok.text       = std::string(source.substr(block_start));
             tok.language   = std::string(language);
-            tok.start_line = count_lines(source.substr(0, block_start));
-            tok.end_line   = count_lines(source);
+            tok.start_line = lines.line_of(block_start);
+            tok.end_line   = end_line_of(lines, block_start, source.size());
             tok.name       = "(block)";
             tokens.push_back(std::move(tok));
             break;
@@ -215,8 +266,8 @@ std::vector<CodeToken> Tokenizer::tokenize_by_block(
         CodeToken tok;
         tok.text       = std::string(source.substr(block_start, i - block_start));
         tok.language   = std::string(language);
-        tok.start_line = count_lines(source.substr(0, block_start));
-        tok.end_line   = count_lines(source.substr(0, i));
+        tok.start_line = lines.line_of(block_start);
+        tok.end_line   = end_line_of(lines, block_start, i);
         tok.name       = "(block)";
         tokens.push_back(std::move(tok));
     }

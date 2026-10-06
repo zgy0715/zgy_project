@@ -4,10 +4,11 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { stompClient } from '@/lib/socket';
-import type { AgentEvent, WorkflowEvent } from '@/lib/socket';
+import { stompClient, agentEventText } from '@/lib/socket';
+import type { AgentEvent, WorkflowEvent, NotificationEvent } from '@/lib/socket';
 import { useAgentStore } from '@/stores/agent-store';
 import { useWorkflowStore } from '@/stores/workflow-store';
+import { useNotificationStore } from '@/stores/notification-store';
 import type { AgentStatus } from '@/types';
 
 // Map STOMP agent event types to AgentStatus
@@ -17,6 +18,12 @@ function agentEventTypeToStatus(eventType: AgentEvent['eventType']): AgentStatus
       return 'executing';
     case 'AGENT_OUTPUT':
       return 'executing';
+    case 'AGENT_THINKING':
+      return 'planning';
+    case 'REVIEW_FINDING':
+      return 'reviewing';
+    case 'TEST_RESULT':
+      return 'reviewing';
     case 'TASK_COMPLETED':
       return 'completed';
     case 'TASK_FAILED':
@@ -25,6 +32,27 @@ function agentEventTypeToStatus(eventType: AgentEvent['eventType']): AgentStatus
       return 'pending';
   }
 }
+
+// Emoji shown on a user notification, keyed by the backend event type.
+const NOTIFICATION_ICONS: Record<string, string> = {
+  TASK_COMPLETED: '✅',
+  TASK_FAILED: '❌',
+  WORKFLOW_COMPLETED: '🎉',
+  WORKFLOW_FAILED: '⚠️',
+  REVIEW_FINDING: '🔍',
+  INFO: 'ℹ️',
+};
+
+// Readable Chinese title for the same six backend notification types, so the UI
+// never shows the raw enum name.
+const NOTIFICATION_TITLES: Record<string, string> = {
+  TASK_COMPLETED: '任务完成',
+  TASK_FAILED: '任务失败',
+  WORKFLOW_COMPLETED: '工作流完成',
+  WORKFLOW_FAILED: '工作流失败',
+  REVIEW_FINDING: '评审发现',
+  INFO: '提示',
+};
 
 // Map STOMP workflow node status to WorkflowNodeData status
 function nodeStatusToWorkflowStatus(
@@ -48,6 +76,7 @@ export function useWebSocket(projectId?: string) {
   const updateLastMessage = useAgentStore((s) => s.updateLastMessage);
   const updateWorkflowNode = useWorkflowStore((s) => s.updateNode);
   const setWorkflowExecuting = useWorkflowStore((s) => s.setExecuting);
+  const addNotification = useNotificationStore((s) => s.addNotification);
 
   // Connect on mount, disconnect on unmount
   useEffect(() => {
@@ -62,6 +91,22 @@ export function useWebSocket(projectId?: string) {
     };
   }, []);
 
+  // Subscribe to the user notification queue (/user/queue/notifications)
+  useEffect(() => {
+    stompClient.subscribeNotifications((notification: NotificationEvent) => {
+      addNotification({
+        icon: NOTIFICATION_ICONS[notification.type] ?? '🔔',
+        title: NOTIFICATION_TITLES[notification.type] ?? '通知',
+        description: notification.message ?? '',
+        timestamp: notification.timestamp ?? new Date().toISOString(),
+      });
+    });
+
+    return () => {
+      stompClient.unsubscribeNotifications();
+    };
+  }, [addNotification]);
+
   // Join/leave project channel and handle events
   useEffect(() => {
     if (!projectId) return;
@@ -73,28 +118,59 @@ export function useWebSocket(projectId?: string) {
         const agent = agents.find(a => a.agentType === event.agentType);
         if (!agent) return;
         const agentId = agent.id;
+        const text = agentEventText(event);
 
         switch (event.eventType) {
           case 'TASK_STARTED':
             updateAgent(agentId, { status });
             break;
 
+          case 'AGENT_THINKING':
+            updateAgent(agentId, { status });
+            break;
+
+          case 'REVIEW_FINDING':
+            updateAgent(agentId, { status });
+            if (text) {
+              addMessage({
+                id: `msg-${Date.now()}`,
+                role: 'assistant',
+                content: text,
+                agentId: agentId,
+                timestamp: event.timestamp ?? new Date().toISOString(),
+              });
+            }
+            break;
+
+          case 'TEST_RESULT':
+            updateAgent(agentId, { status });
+            if (text) {
+              addMessage({
+                id: `msg-${Date.now()}`,
+                role: 'assistant',
+                content: text,
+                agentId: agentId,
+                timestamp: event.timestamp ?? new Date().toISOString(),
+              });
+            }
+            break;
+
           case 'AGENT_OUTPUT':
             updateAgent(agentId, { status });
-            if (event.output) {
-              updateLastMessage(event.output);
+            if (text) {
+              updateLastMessage(text);
             }
             break;
 
           case 'TASK_COMPLETED':
             updateAgent(agentId, { status });
-            if (event.output) {
+            if (text) {
               addMessage({
                 id: `msg-${Date.now()}`,
                 role: 'assistant',
-                content: event.output,
+                content: text,
                 agentId: agentId,
-                timestamp: event.timestamp,
+                timestamp: event.timestamp ?? new Date().toISOString(),
               });
             }
             break;

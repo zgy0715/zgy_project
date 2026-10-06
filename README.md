@@ -1,4 +1,4 @@
-﻿﻿<div align="center">
+<div align="center">
 
 <img src="https://img.shields.io/badge/DeepAgent-v0.2.1-6366f1?style=for-the-badge&logo=robot&logoColor=white" alt="DeepAgent" />
 
@@ -145,11 +145,11 @@ DeepAgent 采用纵深防御策略，在每一层都实施了安全措施：
 
 ### 前置要求
 
-- Docker & Docker Compose
-- Node.js 18+ (本地开发)
-- Java 21 (本地开发)
+- Docker & Docker Compose (v2, 使用 `docker compose` 而非 `docker-compose`)
+- Node.js 20+ (本地开发)
+- Java 21 + Maven (本地开发 — 本仓库**没有** Maven Wrapper，请直接使用 `mvn`)
 - Python 3.11+ (本地开发)
-- C++17 编译器 (向量引擎)
+- C++17 编译器 + CMake 3.16+ (向量引擎，可选 — 缺失时 agent-runtime 会退化为 HTTP 模式)
 
 ### 一键部署 (Docker)
 
@@ -164,10 +164,12 @@ cp .env.example .env
 #     编辑 .env，设置以下关键密钥:
 #     - JWT_SECRET: 至少32字符随机字符串
 #     - INTERNAL_API_KEY: 64字符十六进制随机字符串
+#       (agent-runtime 侧对应的变量名是 SECURITY_INTERNAL_API_KEY，两者必须一致)
 #     - OPENAI_API_KEY: 有效的 OpenAI API Key
+#     变量名前缀说明见 .env.example 顶部注释
 
 # 3. 启动所有服务
-docker-compose up -d
+docker compose up -d
 
 # 4. 访问 http://localhost:3000
 ```
@@ -178,25 +180,32 @@ docker-compose up -d
 # 1. 复制并配置环境变量
 cp .env.example .env
 # 编辑 .env 填入 JWT_SECRET (≥32字符), INTERNAL_API_KEY, OPENAI_API_KEY
+# agent-runtime 需要自己的 .env (变量前缀为 DB_ / REDIS_ / LLM_ / SECURITY_):
+cp agent-runtime/.env.example agent-runtime/.env
 
 # 2. 启动数据库依赖 (Docker)
-docker-compose up -d postgres redis rabbitmq
+docker compose up -d postgres redis rabbitmq
 
 # 3. 启动 API Gateway (Java)
 cd api-gateway
-./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
 
 # 4. 启动 Agent Runtime (Python)
 cd agent-runtime
+python -m venv .venv
+.venv/Scripts/activate        # Windows; Linux/macOS 用 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 
 # 5. 启动前端 (Node.js)
 cd frontend
 npm install
 npm run dev
-# 访问 http://localhost:3000
+# 访问 http://localhost:3001  (本地开发端口是 3001，不是 3000)
 ```
+
+> 向量引擎可选：执行 `make build-vector` 编译原生扩展后，
+> agent-runtime 会自动通过 pybind11 使用它；否则回退到 HTTP 模式。
 
 ---
 
@@ -317,6 +326,19 @@ zgy_project/
 - [x] HNSW 构造函数修复
 - [ ] 演示视频与文档
 
+### v0.2.2 — 可构建性修复与功能补全 ✅
+- [x] 清除全仓库 UTF-8 BOM — agent-runtime 整包无法 import 的根因
+- [x] api-gateway: 4 处编译错误 + 缺失的 `UserDetailsService` Bean + JWT 配置占位符
+- [x] vector-engine: 3 个 CMake / pybind11 构建阻断 + 7 处不存在的绑定符号
+- [x] frontend: Next 14 `use(params)` 导致 5 个路由崩溃、`next build` ESLint 阻断
+- [x] Agent / Workflow 所有权持久化 (V2 迁移) 与 IDOR 修复
+- [x] WebSocket 订阅按所有权校验，不再跨租户泄漏
+- [x] 终端命令注入 (改用 `create_subprocess_exec`) 与路径穿越修复
+- [x] 补齐 `PUT /auth/profile`、`POST /auth/change-password`、`PUT /agents/{id}` 等端点
+- [x] 真实 Diff 基线、项目状态中文映射、通知图标与标题映射
+- [x] CI 重写: 修正不存在的 `./mvnw` 与无效的 `-DBUILD_TESTS=ON`，补 type-check / test 门禁
+- [ ] api-gateway `mvn verify` 与 vector-engine `cmake` 编译验证 (本机无 JDK / CMake)
+
 ---
 
 ## 🌟 项目亮点
@@ -395,6 +417,52 @@ Docker 容器化 · GitHub Actions CI/CD · 单元测试 · Flyway 迁移——�
 ---
 
 ## 📋 变更日志
+
+### v0.2.2 - 2026-10-06 — 维护与功能补全
+
+详见 [AIREAD.md](./AIREAD.md#v022---2026-10-06--维护与功能补全) 完整变更日志。
+
+#### 🔴 构建 / 启动阻断修复
+- 清除 24 个文件的 UTF-8 BOM (其中 7 个叠加 4 个)：`app/tools/terminal.py` 的双 BOM 使
+  **整个 agent-runtime 包无法 import**，javac / YAML / Compose 解析同时失败
+- api-gateway: `RateLimitFilter` 修改 record 字段、`AgentEventPublisher` 未定义字段、
+  `WebSocketAuthInterceptor` 不可转换强转、`AuthService` 缺少 `findByUsername`
+- api-gateway: 补齐 `UserDetailsService` Bean (原先启动即失败) 与 JWT `@Value` 占位符
+- agent-runtime: `coder.py` 未绑定的 `context_section` (必然 `NameError`)、`documents.py` 路由顺序
+- vector-engine: 过早的 `hnswlib::hnswlib` ALIAS、不存在的 `CosineSpace`、构造函数签名不一致、
+  7 处无效 pybind11 绑定、`_vector_engine` 与 `PYBIND11_MODULE` 名称不一致
+- frontend: Next 14 `use(params)` 使 5 个项目详情路由白屏；修复 `next build` ESLint 阻断
+
+#### 🟠 安全修复
+- IDOR: `GET /projects/{id}` 无所有者过滤；`Scheduler` / `Orchestrator` 收到 principal 却从不使用
+- 所有权持久化: `agent_ownership` / `workflow_ownership` / `tasks.owner_id` (V2 迁移) 取代内存 Map
+- WebSocket: `/topic/project/{id}` 需通过 `existsByIdAndOwnerId`，不再跨租户泄漏
+- 命令注入: `TerminalTool` 从 shell 执行改为 `create_subprocess_exec`，默认关闭 socket 能力
+- 路径穿越: `startswith` 改为组件级 `Path.is_relative_to`；`git_ops` 补上沙箱校验
+- 内部认证 fail-open 改为 fail-closed + `hmac.compare_digest`
+- `DagScheduler` 重试从未生效且失败被吞 (DAG 仍报成功)，重写为真实有界重试
+- `@Data` 生成的 `toString()` 泄漏密码哈希 / refresh token，改为 `@Getter/@Setter`
+
+#### 🟡 功能补全
+- 新增 `PUT /auth/profile`、`GET /auth/profile`、`POST /auth/change-password`，Settings 页面真实调用
+- 新增 `PUT /agents/{id}`、`GET|PUT /agents/{id}/config` 与 `GET /workflows/templates`、
+  `PUT /workflows/{id}`、`GET|PUT /projects/{id}/files/{fileId}`、`GET /projects/{id}/activity`
+- Diff 基线改为服务端真实内容，删除伪造基线
+- 项目状态保持后端大写枚举 + 前端唯一中文映射
+- 通知按 `type` 映射图标与中文标题，前端订阅 `/user/queue/notifications`
+- WebSocket 信封统一为 `{eventType, projectId, taskId, agentType, data, timestamp}`
+
+#### 🔵 工程 / 配置 / CI
+- `.env.example` 重写 (修正 `DB_` / `SECURITY_` 前缀、补齐安全变量、说明 `NEXT_PUBLIC_*` 为构建期内联)
+- `Makefile`: 移除吞掉失败的 `|| true`，`setup` 修正为真正安装到 venv
+- `.gitignore`: 移除裸 `Makefile` 规则 (导致根 `Makefile` 未被跟踪)，补 `*.pyd`
+- `ci.yml` 重写: 修正不存在的 `./mvnw`、无效的 `-DBUILD_TESTS=ON`，补前端 type-check / test 门禁
+- `scripts/run_e2e_tests.{ps1,sh}` 改用 venv 解释器并纳入全部测试文件
+
+#### ⚠️ 验证范围
+- 已实跑: 前端 `tsc` (69 文件 0 诊断)、`jest` (2 套件 / 56 用例通过)、`next build`；
+  agent-runtime `pytest` (202 passed / 1 skipped)
+- **未验证**: api-gateway (无 JDK/Maven) 与 vector-engine (无 CMake) 未做编译验证
 
 ### v0.2.1 - 2026-06-15 — 安全审计修复
 

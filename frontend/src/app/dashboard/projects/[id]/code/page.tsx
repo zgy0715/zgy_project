@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, use, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { X, GitCompare, Terminal as TerminalIcon } from 'lucide-react';
 import { FileTree } from '@/components/code/file-tree';
@@ -45,19 +45,6 @@ const Terminal = dynamic(
   }
 );
 
-// Generate simulated original code by removing/modifying a few lines
-function generateOriginalCode(code: string): string {
-  const lines = code.split('\n');
-  // Remove every 5th line and modify every 8th line to simulate changes
-  const result = lines.filter((_, i) => (i + 1) % 5 !== 0).map((line, i) => {
-    if ((i + 1) % 8 === 0 && line.trim().length > 0) {
-      return line.replace(/public/, 'private').replace(/final /, '');
-    }
-    return line;
-  });
-  return result.join('\n');
-}
-
 // Format file size
 function formatFileSize(bytes?: number): string {
   if (!bytes) return '—';
@@ -69,9 +56,9 @@ function formatFileSize(bytes?: number): string {
 export default function CodePage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = use(params);
+  const { id } = params;
   const projectId = id;
 
   // Terminal panel visibility
@@ -82,13 +69,16 @@ export default function CodePage({
   const openTabs = useEditorStore((s) => s.openTabs);
   const activeTabId = useEditorStore((s) => s.activeTabId);
   const fileContent = useEditorStore((s) => s.fileContent);
+  const originalContent = useEditorStore((s) => s.originalContent);
   const isDiffMode = useEditorStore((s) => s.isDiffMode);
+  const error = useEditorStore((s) => s.error);
   const selectFile = useEditorStore((s) => s.selectFile);
   const closeTab = useEditorStore((s) => s.closeTab);
   const setActiveTab = useEditorStore((s) => s.setActiveTab);
   const toggleDiffMode = useEditorStore((s) => s.toggleDiffMode);
   const fetchFileTree = useEditorStore((s) => s.fetchFileTree);
   const fetchFileContent = useEditorStore((s) => s.fetchFileContent);
+  const clearError = useEditorStore((s) => s.clearError);
 
   // Current active tab info
   const activeTab = openTabs.find((t) => t.id === activeTabId) ?? null;
@@ -112,10 +102,10 @@ export default function CodePage({
     ? fileContent[activeTab.fileId] ?? ''
     : '';
 
-  // Simulated original code for diff mode
+  // Real diff baseline: the last content loaded from (or saved to) the gateway.
   const originalCode = useMemo(
-    () => generateOriginalCode(currentFileContent),
-    [currentFileContent]
+    () => (activeTab ? originalContent[activeTab.fileId] ?? currentFileContent : ''),
+    [activeTab, originalContent, currentFileContent]
   );
 
   // Line count
@@ -130,6 +120,18 @@ export default function CodePage({
         <div className="px-4 py-3 border-b border-surface-3">
           <h2 className="text-sm font-medium text-white">项目文件</h2>
         </div>
+        {error && (
+          <div className="flex items-start justify-between gap-2 px-3 py-2 border-b border-red-500/30 bg-red-500/10 text-xs text-red-400">
+            <span className="min-w-0 break-words">{error}</span>
+            <button
+              onClick={clearError}
+              className="flex-shrink-0 hover:text-red-300 transition-colors"
+              title="关闭"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           <FileTree
             files={files}

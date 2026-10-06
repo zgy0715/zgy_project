@@ -6,17 +6,19 @@ import { motion } from 'framer-motion';
 import {
   FolderKanban,
   Bot,
-  Code,
-  CheckCircle,
+  Workflow,
+  Activity,
 } from 'lucide-react';
 import { useProjectStore } from '@/stores/project-store';
+import { useAgentStore } from '@/stores/agent-store';
+import { useWorkflowStore } from '@/stores/workflow-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { StatsCard } from '@/components/dashboard/stats-card';
 import { ActivityFeed } from '@/components/dashboard/activity-feed';
 import { Badge } from '@/components/ui/badge';
 import { Spinner } from '@/components/ui/spinner';
-import { cn, formatRelativeTime } from '@/lib/utils';
-import type { Project } from '@/types';
+import { formatRelativeTime } from '@/lib/utils';
+import { projectStatusLabel, projectStatusVariant, type Project } from '@/types';
 
 // Animation variants
 const containerVariants = {
@@ -32,14 +34,6 @@ const itemVariants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
 };
 
-// Agent status dots for project cards
-const agentDots = [
-  { color: 'bg-blue-500', label: 'Coder' },
-  { color: 'bg-amber-500', label: 'Reviewer' },
-  { color: 'bg-violet-500', label: 'Planner' },
-  { color: 'bg-green-500', label: 'Tester' },
-];
-
 export default function DashboardPage() {
   const projects = useProjectStore((s) => s.projects);
   const currentProject = useProjectStore((s) => s.currentProject);
@@ -47,14 +41,19 @@ export default function DashboardPage() {
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const fetchActivities = useProjectStore((s) => s.fetchActivities);
   const isProjectsLoading = useProjectStore((s) => s.isLoading);
+  const agents = useAgentStore((s) => s.agents);
+  const fetchAgents = useAgentStore((s) => s.fetchAgents);
+  const workflows = useWorkflowStore((s) => s.workflows);
+  const fetchWorkflows = useWorkflowStore((s) => s.fetchWorkflows);
   const user = useAuthStore((s) => s.user);
 
-  // Fetch projects on mount if not loaded
+  // Load everything the overview summarises. Store actions have stable
+  // identities, so this runs once on mount.
   useEffect(() => {
-    if (projects.length === 0) {
-      fetchProjects();
-    }
-  }, []);
+    fetchProjects();
+    fetchAgents();
+    fetchWorkflows();
+  }, [fetchProjects, fetchAgents, fetchWorkflows]);
 
   // Fetch activities when current project changes
   useEffect(() => {
@@ -63,45 +62,27 @@ export default function DashboardPage() {
     }
   }, [currentProject?.id, fetchActivities]);
 
-  // Derive stats from store data
-  const totalProjects = projects.length;
-  const totalAgentRuns = projects.reduce(
-    (sum, p) => sum + (p.stats?.totalConversations ?? 0),
-    0
-  );
-  const totalCodeLines = projects.reduce(
-    (sum, p) => sum + (p.stats?.codeFiles ?? 0) * 350,
-    0
-  );
-  const testPassRate = 0;
-
+  // All figures below are counted from real loaded data — no invented trends.
   const statsData = [
     {
       title: '项目总数',
-      value: totalProjects,
-      change: 12,
+      value: projects.length,
       icon: <FolderKanban className="w-5 h-5" />,
     },
     {
-      title: 'Agent 运行',
-      value: totalAgentRuns,
-      suffix: '次',
-      change: 28,
+      title: 'Agent 总数',
+      value: agents.length,
       icon: <Bot className="w-5 h-5" />,
     },
     {
-      title: '代码生成',
-      value: totalCodeLines.toLocaleString(),
-      suffix: '行',
-      change: 45,
-      icon: <Code className="w-5 h-5" />,
+      title: '工作流',
+      value: workflows.length,
+      icon: <Workflow className="w-5 h-5" />,
     },
     {
-      title: '测试通过率',
-      value: testPassRate,
-      suffix: '%',
-      change: 3.1,
-      icon: <CheckCircle className="w-5 h-5" />,
+      title: '活动记录',
+      value: activities.length,
+      icon: <Activity className="w-5 h-5" />,
     },
   ];
 
@@ -142,8 +123,6 @@ export default function DashboardPage() {
             <StatsCard
               title={stat.title}
               value={stat.value}
-              suffix={stat.suffix}
-              change={stat.change}
               icon={stat.icon}
             />
           </motion.div>
@@ -191,10 +170,6 @@ export default function DashboardPage() {
 
 // Project card component
 function ProjectCard({ project }: { project: Project }) {
-  const statusVariant =
-    project.status === 'active' ? 'success' : 'warning';
-  const statusLabel = project.status === 'active' ? '进行中' : '草稿';
-
   return (
     <motion.div variants={itemVariants}>
       <Link href={`/dashboard/projects/${project.id}`}>
@@ -204,8 +179,8 @@ function ProjectCard({ project }: { project: Project }) {
             <h3 className="text-base font-semibold text-white leading-tight">
               {project.name}
             </h3>
-            <Badge variant={statusVariant} className="shrink-0 ml-2">
-              {statusLabel}
+            <Badge variant={projectStatusVariant(project.status)} className="shrink-0 ml-2">
+              {projectStatusLabel(project.status)}
             </Badge>
           </div>
 
@@ -214,34 +189,22 @@ function ProjectCard({ project }: { project: Project }) {
             {project.description}
           </p>
 
-          {/* Tech stack tags */}
+          {/* Agent type */}
           <div className="flex flex-wrap gap-1.5 mb-4">
-            {(project.techStack ?? []).map((tech) => (
-              <span
-                key={tech}
-                className="inline-flex items-center rounded-md bg-surface-2 px-2 py-0.5 text-xs text-zinc-300"
-              >
-                {tech}
+            {project.agentType && (
+              <span className="inline-flex items-center rounded-md bg-surface-2 px-2 py-0.5 text-xs text-zinc-300">
+                {project.agentType}
               </span>
-            ))}
+            )}
           </div>
 
-          {/* Bottom: Agent dots + last activity */}
+          {/* Bottom: last updated */}
           <div className="flex items-center justify-between pt-3 border-t border-surface-3">
-            <div className="flex items-center gap-1.5">
-              {agentDots.slice(0, project.stats?.totalAgents ?? 0).map((dot, i) => (
-                <span
-                  key={i}
-                  className={cn('w-2 h-2 rounded-full', dot.color)}
-                  title={dot.label}
-                />
-              ))}
-              <span className="text-xs text-zinc-500 ml-1">
-                {project.stats?.totalAgents ?? 0} 个 Agent
-              </span>
-            </div>
             <span className="text-xs text-zinc-500">
-              {project.stats?.lastActivityAt ? formatRelativeTime(project.stats.lastActivityAt) : '—'}
+              创建于 {formatRelativeTime(project.createdAt)}
+            </span>
+            <span className="text-xs text-zinc-500">
+              更新于 {formatRelativeTime(project.updatedAt)}
             </span>
           </div>
         </div>

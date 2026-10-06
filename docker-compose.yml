@@ -1,5 +1,3 @@
-﻿version: "3.9"
-
 services:
   # ========================
   # Databases & Message Queue
@@ -8,15 +6,15 @@ services:
     image: postgres:16-alpine
     container_name: deepagent-postgres
     environment:
-      POSTGRES_DB: deepagent
-      POSTGRES_USER: deepagent
+      POSTGRES_DB: ${POSTGRES_DB:-deepagent}
+      POSTGRES_USER: ${POSTGRES_USER:-deepagent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deepagent_secret}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U deepagent"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deepagent} -d ${POSTGRES_DB:-deepagent}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,7 +36,7 @@ services:
     image: rabbitmq:3.13-management-alpine
     container_name: deepagent-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: deepagent
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-deepagent}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-deepagent_secret}
     ports:
       - "5672:5672"
@@ -51,23 +49,21 @@ services:
       timeout: 10s
       retries: 5
 
-  minio:
-    image: minio/minio:latest
-    container_name: deepagent-minio
-    environment:
-      MINIO_ROOT_USER: deepagent
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-deepagent_secret}
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - miniodata:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  # MinIO is not referenced by any application service yet (no service reads MINIO_*),
+  # so it is disabled to avoid running unused infrastructure. Re-enable it together
+  # with the object-storage code before using it.
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: deepagent-minio
+  #   environment:
+  #     MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-deepagent}
+  #     MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-deepagent_secret}
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   volumes:
+  #     - miniodata:/data
 
   # ========================
   # Application Services
@@ -78,12 +74,32 @@ services:
       dockerfile: Dockerfile
     container_name: deepagent-api-gateway
     environment:
+      # Profile "prod" is what application-prod.yml configures. Its placeholders
+      # are DB_HOST/DB_PORT/DB_NAME/DB_USERNAME/DB_PASSWORD/REDIS_HOST/
+      # REDIS_PORT/REDIS_PASSWORD/RABBITMQ_*/JWT_SECRET/AGENT_RUNTIME_URL, so we
+      # set exactly those names (SPRING_DATASOURCE_* would also work, but mixing
+      # the two schemes makes it impossible to tell which value is in effect).
       SPRING_PROFILES_ACTIVE: prod
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/deepagent
-      SPRING_DATASOURCE_USERNAME: deepagent
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-deepagent_secret}
-      SPRING_DATA_REDIS_HOST: redis
-      SPRING_RABBITMQ_HOST: rabbitmq
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-deepagent}
+      DB_USERNAME: ${POSTGRES_USER:-deepagent}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-deepagent_secret}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Empty is the "no AUTH" value the app already defaults to.
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # RabbitMQ credentials must match the broker above: without these Spring
+      # falls back to guest/guest and every publish fails with ACCESS_REFUSED.
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-deepagent}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-deepagent_secret}
+      # Inert today: agent_service.proto is not wired into the protobuf plugin, so
+      # the gateway's gRPC client fails loudly and every agent call goes over HTTP
+      # (AGENT_RUNTIME_URL below). Kept for the intended gRPC migration.
+      GRPC_AGENT_HOST: agent-runtime
+      GRPC_AGENT_PORT: "50051"
       AGENT_RUNTIME_URL: http://agent-runtime:8000
       AGENT_RUNTIME_INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required — generate a random 64-character string}
       # JWT_SECRET is REQUIRED — must be at least 32 characters. Generate with: openssl rand -hex 32
@@ -105,20 +121,28 @@ services:
       dockerfile: Dockerfile
     container_name: deepagent-agent-runtime
     environment:
-      DATABASE_URL: postgresql://deepagent:${POSTGRES_PASSWORD:-deepagent_secret}@postgres:5432/deepagent
+      # NOTE: agent-runtime reads these through app/config.py, whose sub-configs
+      # use the DB_ / REDIS_ / LLM_ / SECURITY_ prefixes — NOT DATABASE_URL.
+      DB_URL: postgresql://${POSTGRES_USER:-deepagent}:${POSTGRES_PASSWORD:-deepagent_secret}@postgres:5432/${POSTGRES_DB:-deepagent}
       REDIS_URL: redis://redis:6379/0
-      RABBITMQ_URL: amqp://deepagent:${RABBITMQ_PASSWORD:-deepagent_secret}@rabbitmq:5672/
-      LLM_PROVIDER: openai
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       LLM_OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set}
       LLM_OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       LLM_OPENAI_MODEL: ${LLM_MODEL:-gpt-4o}
-      VECTOR_ENGINE_URL: http://localhost:8080
+      # The vector engine runs in-process through the vector_engine pybind11
+      # extension, so no VECTOR_ENGINE_URL is needed here. Only set it if you
+      # deploy the standalone HTTP vector service.
       SECURITY_INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY is required — must match the API Gateway value}
+      SECURITY_ALLOWED_DIRECTORIES: '["/app","/workspace"]'
+      SECURITY_ALLOW_SHELL: "false"
+      SECURITY_MAX_FILE_SIZE_MB: "10"
+      # agent-runtime is only reachable through the API gateway, so CORS only has
+      # to allow the gateway origin.
+      CORS_ORIGINS: '["http://localhost:8080"]'
     ports:
       - "8000:8000"
+      # Reserved for the gRPC transport (currently a placeholder in api-gateway).
       - "50051:50051"
-    volumes:
-      - vector-engine-lib:/app/lib
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,14 +154,26 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* values are inlined at BUILD time by Next.js, so passing them
+      # only as runtime environment has no effect. The frontend Dockerfile must
+      # declare matching ARG NEXT_PUBLIC_API_URL / ARG NEXT_PUBLIC_WS_URL.
+      # NOTE the exact shapes the code expects:
+      #   api-client.ts:7 -> BASE_URL = NEXT_PUBLIC_API_URL ?? 'http://localhost:8080/api/v1'
+      #     so the value MUST include the /api/v1 suffix (api-client does not append it)
+      #   socket.ts:8     -> WS_URL   = NEXT_PUBLIC_WS_URL ?? 'http://localhost:8080/ws'
+      #     so the scheme is http://, NOT ws:// — the client is SockJS
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v1}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:8080/ws}
     container_name: deepagent-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
-      NEXT_PUBLIC_WS_URL: ws://localhost:8080/ws
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v1}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:8080/ws}
     ports:
       - "3000:3000"
     depends_on:
-      - api-gateway
+      api-gateway:
+        condition: service_healthy
     restart: unless-stopped
 
 # ========================
@@ -150,7 +186,5 @@ volumes:
     driver: local
   rabbitmqdata:
     driver: local
-  miniodata:
-    driver: local
-  vector-engine-lib:
-    driver: local
+  # miniodata:
+  #   driver: local

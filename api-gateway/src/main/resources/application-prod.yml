@@ -1,4 +1,4 @@
-﻿# Production environment configuration
+# Production environment configuration
 spring:
   # PostgreSQL - production
   datasource:
@@ -31,7 +31,8 @@ spring:
   # Redis - production connection
   data:
     redis:
-      password: ${REDIS_PASSWORD}
+      # 允许未启用认证的 Redis：缺省为空密码
+      password: ${REDIS_PASSWORD:}
       lettuce:
         pool:
           max-active: 30
@@ -53,7 +54,7 @@ jwt:
 grpc:
   client:
     agent-service:
-      host: ${GRPC_AGENT_HOST}
+      host: ${GRPC_AGENT_HOST:agent-runtime}
       port: ${GRPC_AGENT_PORT:50051}
       enable-keep-alive: true
 

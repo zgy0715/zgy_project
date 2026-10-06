@@ -1,17 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import { useWorkflowStore } from '@/stores/workflow-store';
 import { formatRelativeTime } from '@/lib/utils';
 import type { Workflow } from '@/types';
 
+// The gateway forwards the raw Python status string, so match case-insensitively.
 const statusVariantMap: Record<string, 'success' | 'warning' | 'error' | 'secondary' | 'default'> = {
   created: 'secondary',
+  pending: 'secondary',
   running: 'warning',
+  executing: 'warning',
   paused: 'default',
   completed: 'success',
   failed: 'error',
@@ -19,29 +23,42 @@ const statusVariantMap: Record<string, 'success' | 'warning' | 'error' | 'second
 
 const statusLabelMap: Record<string, string> = {
   created: '已创建',
+  pending: '待执行',
   running: '运行中',
+  executing: '运行中',
   paused: '已暂停',
   completed: '已完成',
   failed: '失败',
 };
 
+function statusKey(status?: string | null): string {
+  return (status ?? '').toLowerCase();
+}
+
 export default function WorkflowsPage() {
   const workflows = useWorkflowStore((s) => s.workflows);
+  const fetchWorkflows = useWorkflowStore((s) => s.fetchWorkflows);
   const createWorkflow = useWorkflowStore((s) => s.createWorkflow);
   const deleteWorkflow = useWorkflowStore((s) => s.deleteWorkflow);
   const setCurrentWorkflow = useWorkflowStore((s) => s.setCurrentWorkflow);
   const executeWorkflow = useWorkflowStore((s) => s.executeWorkflow);
   const isLoading = useWorkflowStore((s) => s.isLoading);
+  const error = useWorkflowStore((s) => s.error);
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [wfName, setWfName] = useState('');
   const [wfDesc, setWfDesc] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
+  // Load the workflow list on mount (previously never fetched at all).
+  useEffect(() => {
+    fetchWorkflows();
+  }, [fetchWorkflows]);
+
   const handleCreate = async () => {
     if (!wfName.trim()) return;
     const now = Date.now();
-    await createWorkflow({
+    const created = await createWorkflow({
       name: wfName.trim(),
       description: wfDesc.trim() || '新建工作流',
       nodes: [
@@ -64,6 +81,7 @@ export default function WorkflowsPage() {
       ],
       edges: [],
     });
+    if (!created) return; // keep the dialog open so the error is visible
     setShowCreateDialog(false);
     setWfName('');
     setWfDesc('');
@@ -75,8 +93,8 @@ export default function WorkflowsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await deleteWorkflow(id);
-    setDeleteConfirmId(null);
+    const deleted = await deleteWorkflow(id);
+    if (deleted) setDeleteConfirmId(null);
   };
 
   return (
@@ -94,6 +112,13 @@ export default function WorkflowsPage() {
           新建工作流
         </Button>
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
       {/* Create Workflow Dialog */}
       {showCreateDialog && (
@@ -146,13 +171,17 @@ export default function WorkflowsPage() {
       )}
 
       {/* Workflows grid */}
-      {workflows.length === 0 ? (
+      {isLoading && workflows.length === 0 ? (
+        <div className="text-center py-12 text-zinc-400">
+          <Spinner />
+        </div>
+      ) : workflows.length === 0 ? (
         <div className="text-center py-12 text-zinc-400">
           <svg className="w-16 h-16 text-zinc-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
           <p className="text-lg mb-2">暂无工作流</p>
-          <p className="text-sm">点击"新建工作流"创建你的第一个AI工作流</p>
+          <p className="text-sm">点击「新建工作流」创建你的第一个AI工作流</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -207,8 +236,8 @@ function WorkflowCard({
               {workflow.name}
             </h3>
           )}
-          <Badge variant={statusVariantMap[workflow.status] ?? 'secondary'}>
-            {statusLabelMap[workflow.status] ?? workflow.status}
+          <Badge variant={statusVariantMap[statusKey(workflow.status)] ?? 'secondary'}>
+            {statusLabelMap[statusKey(workflow.status)] ?? workflow.status}
           </Badge>
         </div>
 
@@ -230,18 +259,13 @@ function WorkflowCard({
 
         {/* Node preview */}
         <div className="flex flex-wrap gap-1.5 mb-4">
-          {workflow.nodes
-            .filter((n) => n.type === 'agent')
-            .slice(0, 4)
-            .map((node) => (
-              <Badge key={node.id} variant="outline">
-                {node.data?.label ?? node.name}
-              </Badge>
-            ))}
-          {workflow.nodes.filter((n) => n.type === 'agent').length > 4 && (
-            <Badge variant="outline">
-              +{workflow.nodes.filter((n) => n.type === 'agent').length - 4}
+          {workflow.nodes.slice(0, 4).map((node) => (
+            <Badge key={node.id} variant="outline">
+              {node.data?.label ?? node.name}
             </Badge>
+          ))}
+          {workflow.nodes.length > 4 && (
+            <Badge variant="outline">+{workflow.nodes.length - 4}</Badge>
           )}
         </div>
 
@@ -279,9 +303,9 @@ function WorkflowCard({
             size="sm"
             className="flex-1 text-xs"
             onClick={() => onExecute(workflow)}
-            disabled={workflow.status === 'running'}
+            disabled={statusKey(workflow.status) === 'running' || statusKey(workflow.status) === 'executing'}
           >
-            {workflow.status === 'running' ? '运行中...' : '执行'}
+            {statusKey(workflow.status) === 'running' || statusKey(workflow.status) === 'executing' ? '运行中...' : '执行'}
           </Button>
           {workflow.projectId ? (
             <Link

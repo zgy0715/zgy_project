@@ -4,6 +4,8 @@ import logging
 import traceback
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -86,11 +88,14 @@ def register_error_handlers(app: FastAPI) -> None:
             },
         )
 
+    # FastAPI raises RequestValidationError (not pydantic's ValidationError)
+    # for request body/query validation failures, so both are registered.
+    @app.exception_handler(RequestValidationError)
     @app.exception_handler(ValidationError)
     async def validation_error_handler(
-        request: Request, exc: ValidationError
+        request: Request, exc: ValidationError | RequestValidationError
     ) -> JSONResponse:
-        """Handle Pydantic validation errors."""
+        """Handle Pydantic / FastAPI request validation errors."""
         logger.warning("Validation error: %s", str(exc))
 
         return JSONResponse(
@@ -99,7 +104,7 @@ def register_error_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Request validation failed",
-                    "details": exc.errors(),
+                    "details": jsonable_encoder(exc.errors()),
                 }
             },
         )

@@ -8,15 +8,37 @@ import { STORAGE_KEYS } from './constants';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:8080/ws';
 
 // STOMP event types matching backend WebSocketConfig
-export type AgentEventType = 'TASK_STARTED' | 'AGENT_OUTPUT' | 'TASK_COMPLETED' | 'TASK_FAILED';
+export type AgentEventType =
+  | 'TASK_STARTED'
+  | 'AGENT_OUTPUT'
+  | 'TASK_COMPLETED'
+  | 'TASK_FAILED'
+  | 'AGENT_THINKING'
+  | 'REVIEW_FINDING'
+  | 'TEST_RESULT';
 export type WorkflowEventType = 'NODE_STATUS_CHANGED' | 'WORKFLOW_COMPLETED' | 'WORKFLOW_FAILED';
 
+/**
+ * Envelope published by the gateway `AgentEventPublisher` / `AgentWebSocketHandler`.
+ *
+ * The text payload field on the wire is `data`; `output` is kept as an optional
+ * legacy fallback for older gateway builds. Use {@link agentEventText} to read it.
+ */
 export interface AgentEvent {
   eventType: AgentEventType;
-  taskId: string;
-  agentType: string;
+  projectId?: number | null;
+  taskId?: number | null;
+  agentType?: string | null;
+  /** Canonical text payload field. */
+  data?: string;
+  /** @deprecated legacy gateway builds used `output` instead of `data`. */
   output?: string;
-  timestamp: string;
+  timestamp?: string;
+}
+
+/** Reads the text payload from an agent event, tolerating the legacy `output` field. */
+export function agentEventText(event: AgentEvent): string {
+  return event.data ?? event.output ?? '';
 }
 
 export interface WorkflowEvent {
@@ -43,6 +65,11 @@ class StompClient {
   private connected: boolean = false;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
+  private baseReconnectDelay: number = 1000;
+  private maxReconnectDelay: number = 30000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private manuallyDisconnected: boolean = false;
+  private onlineListener: (() => void) | null = null;
   private onConnectCallbacks: ConnectionCallback[] = [];
   private onErrorCallbacks: ErrorCallback[] = [];
   private currentProjectId: string | null = null;
@@ -50,10 +77,13 @@ class StompClient {
     onAgentEvent?: (event: AgentEvent) => void;
     onWorkflowEvent?: (event: WorkflowEvent) => void;
   } | null = null;
+  private notificationCallback: ((notification: NotificationEvent) => void) | null = null;
 
   // Connect to STOMP server via SockJS
   connect(token?: string): void {
     if (this.client?.active) return;
+
+    this.manuallyDisconnected = false;
 
     const authToken = token ?? (typeof window !== 'undefined'
       ? localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN) ?? undefined
@@ -61,16 +91,21 @@ class StompClient {
 
     this.client = new Client({
       webSocketFactory: () => new SockJS(WS_URL),
-      reconnectDelay: 1000,
+      reconnectDelay: this.baseReconnectDelay,
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
       onConnect: (frame) => {
         console.log('[STOMP] Connected:', frame.headers);
         this.connected = true;
         this.reconnectAttempts = 0;
+        this.client!.reconnectDelay = this.baseReconnectDelay;
         // Re-subscribe to project channel if one was previously joined
         if (this.currentProjectId && this.currentProjectCallbacks) {
           this.joinProject(this.currentProjectId, this.currentProjectCallbacks);
+        }
+        // Re-subscribe to notifications
+        if (this.notificationCallback) {
+          this.subscribeNotifications(this.notificationCallback);
         }
         this.onConnectCallbacks.forEach((cb) => cb());
       },
@@ -88,8 +123,11 @@ class StompClient {
         this.connected = false;
         this.reconnectAttempts++;
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-          console.warn('[STOMP] Max reconnect attempts reached');
+          // Stop stompjs' own fast retry loop and switch to exponential backoff
+          // so we never give up permanently.
+          console.warn('[STOMP] Max reconnect attempts reached, backing off');
           this.client?.deactivate();
+          this.scheduleReconnect();
         }
       },
     });
@@ -101,11 +139,67 @@ class StompClient {
       };
     }
 
+    this.attachOnlineListener();
     this.client.activate();
+  }
+
+  // Schedule a reconnect attempt with exponential backoff
+  private scheduleReconnect(): void {
+    if (this.manuallyDisconnected || this.reconnectTimer) return;
+    const delay = Math.min(
+      this.baseReconnectDelay * 2 ** Math.min(this.reconnectAttempts, 5),
+      this.maxReconnectDelay
+    );
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.reconnectNow();
+    }, delay);
+  }
+
+  /**
+   * Attempt to re-establish the connection. Safe to call at any time; also
+   * invoked automatically when the browser fires the `online` event.
+   */
+  reconnectNow(): void {
+    this.manuallyDisconnected = false;
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.client?.active) return;
+    if (!this.client) {
+      this.connect();
+      return;
+    }
+    this.client.reconnectDelay = this.baseReconnectDelay;
+    this.client.activate();
+  }
+
+  private attachOnlineListener(): void {
+    if (typeof window === 'undefined' || this.onlineListener) return;
+    this.onlineListener = () => {
+      console.log('[STOMP] Browser back online, reconnecting');
+      this.reconnectNow();
+    };
+    window.addEventListener('online', this.onlineListener);
+  }
+
+  private detachOnlineListener(): void {
+    if (typeof window === 'undefined' || !this.onlineListener) return;
+    window.removeEventListener('online', this.onlineListener);
+    this.onlineListener = null;
   }
 
   // Disconnect from STOMP server
   disconnect(): void {
+    this.manuallyDisconnected = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.detachOnlineListener();
+
     // Unsubscribe all subscriptions
     this.subscriptions.forEach((sub) => {
       try {
@@ -219,7 +313,7 @@ class StompClient {
     const subscription = this.client.subscribe(topic, (message: IMessage) => {
       try {
         const event = JSON.parse(message.body) as AgentEvent;
-        callback(event.output ?? message.body);
+        callback(agentEventText(event) || message.body);
       } catch (err) {
         console.error('[STOMP] Failed to parse task event:', err);
         callback(message.body);
@@ -255,6 +349,9 @@ class StompClient {
 
   // Subscribe to user-specific notification channel
   subscribeNotifications(callback: (notification: NotificationEvent) => void): void {
+    // Remember the callback so it can be re-established after a reconnect.
+    this.notificationCallback = callback;
+
     if (!this.client?.active) {
       console.warn('[STOMP] Cannot subscribe to notifications: not connected');
       return;
@@ -279,6 +376,7 @@ class StompClient {
 
   // Unsubscribe from user notifications
   unsubscribeNotifications(): void {
+    this.notificationCallback = null;
     const topic = '/user/queue/notifications';
     const subscription = this.subscriptions.get(topic);
     if (subscription) {
@@ -291,16 +389,23 @@ class StompClient {
     }
   }
 
-  // Send terminal input to backend via STOMP
-  sendTerminalInput(projectId: string, command: string): void {
+  /**
+   * Send terminal input to backend via STOMP.
+   *
+   * NOTE: the gateway currently exposes **no** `@MessageMapping` for
+   * `/app/project/{id}/terminal`, so this publish is never handled server-side.
+   * Returns `false` when the message could not be handed to the broker.
+   */
+  sendTerminalInput(projectId: string, command: string): boolean {
     if (!this.client?.active) {
       console.warn('[STOMP] Cannot send terminal input: not connected');
-      return;
+      return false;
     }
     this.client.publish({
       destination: `/app/project/${projectId}/terminal`,
       body: JSON.stringify({ command }),
     });
+    return true;
   }
 
   // Send a message to the server via STOMP
@@ -323,12 +428,20 @@ class StompClient {
 }
 
 // Type guards for event routing
+const AGENT_EVENT_TYPES: AgentEventType[] = [
+  'TASK_STARTED',
+  'AGENT_OUTPUT',
+  'TASK_COMPLETED',
+  'TASK_FAILED',
+  'AGENT_THINKING',
+  'REVIEW_FINDING',
+  'TEST_RESULT',
+];
+
 function isAgentEvent(event: unknown): event is AgentEvent {
   if (typeof event !== 'object' || event === null) return false;
   const obj = event as Record<string, unknown>;
-  return ['TASK_STARTED', 'AGENT_OUTPUT', 'TASK_COMPLETED', 'TASK_FAILED'].includes(
-    obj.eventType as string
-  );
+  return AGENT_EVENT_TYPES.includes(obj.eventType as AgentEventType);
 }
 
 function isWorkflowEvent(event: unknown): event is WorkflowEvent {

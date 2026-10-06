@@ -1,11 +1,11 @@
 'use client';
 
-import { use } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useProjectStore } from '@/stores/project-store';
+import { projectStatusLabel, projectStatusVariant } from '@/types';
 
 // Tab navigation configuration
 const tabs = [
@@ -15,24 +15,19 @@ const tabs = [
   { label: '代码编辑器', href: (id: string) => `/dashboard/projects/${id}/code` },
 ];
 
-// Status badge variant mapping
-const statusVariantMap: Record<string, 'success' | 'warning' | 'secondary'> = {
-  active: 'success',
-  draft: 'warning',
-  archived: 'secondary',
-};
-
 export default function ProjectDetailLayout({
   children,
   params,
 }: {
   children: React.ReactNode;
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = use(params);
+  const { id } = params;
   const pathname = usePathname();
+  // `id` comes from the URL as a string while the gateway serializes a Java
+  // Long, so compare on string form.
   const project = useProjectStore((s) =>
-    s.projects.find((p) => p.id === id)
+    s.projects.find((p) => String(p.id) === String(id))
   );
 
   // Determine active tab from pathname
@@ -54,8 +49,8 @@ export default function ProjectDetailLayout({
             {project?.name ?? '项目详情'}
           </h1>
           {project?.status && (
-            <Badge variant={statusVariantMap[project.status] ?? 'secondary'}>
-              {project.status === 'active' ? '活跃' : project.status === 'draft' ? '草稿' : '已归档'}
+            <Badge variant={projectStatusVariant(project.status)}>
+              {projectStatusLabel(project.status)}
             </Badge>
           )}
         </div>

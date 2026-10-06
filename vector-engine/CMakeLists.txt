@@ -15,14 +15,12 @@ option(VECTOR_ENGINE_BUILD_TESTS "Build unit tests" ON)
 option(VECTOR_ENGINE_BUILD_BINDINGS "Build Python bindings" ON)
 option(VECTOR_ENGINE_ENABLE_LTO "Enable link-time optimization" OFF)
 
-# Append cmake module path
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-
-# Third-party dependencies
+# Third-party dependencies (find_package-free: see third_party/CMakeLists.txt)
 add_subdirectory(third_party)
 
 # Core library
 set(VE_SOURCES
+    src/engine/engine.cpp
     src/hnsw/hnsw_index.cpp
     src/embedding/code_embedder.cpp
     src/embedding/tokenizer.cpp
@@ -35,13 +33,13 @@ set(VE_SOURCES
 
 add_library(vector_engine STATIC ${VE_SOURCES})
 
+# hnswlib is header-only; its include directory travels on the imported
+# interface target, so no hard-coded third_party path is needed here.
 target_include_directories(vector_engine
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}/third_party/hnswlib
 )
 
 target_link_libraries(vector_engine

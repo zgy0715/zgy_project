@@ -39,7 +39,7 @@ class AgentRestClientIntegrationTest {
         mockWebServer = new MockWebServer();
         mockWebServer.start();
         String baseUrl = String.format("http://localhost:%d", mockWebServer.getPort());
-        agentRestClient = new AgentRestClient(baseUrl);
+        agentRestClient = new AgentRestClient(baseUrl, "test-internal-key");
     }
 
     @AfterEach
@@ -109,7 +109,7 @@ class AgentRestClientIntegrationTest {
                     .setBody(responseBody)
                     .setHeader("Content-Type", "application/json"));
 
-            Map result = agentRestClient.listAgents("coder", "pending").block();
+            var result = agentRestClient.listAgents("coder", "pending").block();
 
             assertNotNull(result);
 
@@ -339,7 +339,7 @@ class AgentRestClientIntegrationTest {
                     .setBody(responseBody)
                     .setHeader("Content-Type", "application/json"));
 
-            Map result = agentRestClient.getMessages("msg-agent", 10, 0).block();
+            var result = agentRestClient.getMessages("msg-agent", 10, 0).block();
 
             assertNotNull(result);
 

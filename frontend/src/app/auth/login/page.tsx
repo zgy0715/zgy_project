@@ -7,23 +7,48 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useAuth } from '@/lib/hooks/use-auth';
+import { STORAGE_KEYS } from '@/lib/constants';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState('/dashboard');
   const { login, isLoading, error, clearError, isAuthenticated } = useAuth();
   const router = useRouter();
 
-  // If already authenticated, redirect to dashboard
+  // Read the post-login destination and the remembered username after mount.
+  // `window.location.search` is used instead of `useSearchParams()` so the page
+  // does not need a Suspense boundary.
+  useEffect(() => {
+    const next = new URLSearchParams(window.location.search).get('callbackUrl');
+    // Only accept same-site absolute paths — never an external redirect target.
+    if (next && next.startsWith('/') && !next.startsWith('//')) {
+      setCallbackUrl(next);
+    }
+
+    const remembered = localStorage.getItem(STORAGE_KEYS.REMEMBERED_USERNAME);
+    if (remembered) {
+      setUsername(remembered);
+      setRemember(true);
+    }
+  }, []);
+
+  // If already authenticated, redirect to the requested page
   useEffect(() => {
     if (isAuthenticated) {
-      router.replace('/dashboard');
+      router.replace(callbackUrl);
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, router, callbackUrl]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    await login({ username, password });
+    if (remember) {
+      localStorage.setItem(STORAGE_KEYS.REMEMBERED_USERNAME, username);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.REMEMBERED_USERNAME);
+    }
+    await login({ username, password }, callbackUrl);
   };
 
   return (
@@ -101,9 +126,11 @@ export default function LoginPage() {
             />
 
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-zinc-400">
+              <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
                 <input
                   type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
                   className="rounded border-surface-3 bg-surface-1 text-brand-600 focus:ring-brand-500"
                 />
                 记住我

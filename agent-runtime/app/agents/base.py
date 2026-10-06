@@ -227,7 +227,10 @@ class BaseAgent(ABC):
         self.current_task = task
         self.status = TaskStatus.PLANNING
         self.updated_at = datetime.utcnow()
+        # Reset per-run state so reused/singleton agents do not leak stale
+        # artifacts or thinking steps from previous runs into this one.
         self.thinking_steps = []
+        self.artifacts = []
 
         self.add_thinking_step(
             step="init",
@@ -383,6 +386,7 @@ class BaseAgent(ABC):
             "name": self.name,
             "agent_type": self.agent_type.value,
             "description": self.description,
+            "config": dict(self.config),
             "status": self.status.value,
             "current_task": self.current_task,
             "artifacts": self.artifacts,

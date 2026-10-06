@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import type { Project, ProjectActivity, CreateProjectRequest, UpdateProjectRequest } from '@/types';
 import { projectsApi } from '@/lib/api-client';
+import { asArray, getErrorMessage } from '@/lib/utils';
 
 interface ProjectState {
   projects: Project[];
@@ -19,16 +20,21 @@ interface ProjectState {
   setCurrentProject: (project: Project | null) => void;
   setCurrentProjectById: (id: string) => void;
   fetchProjects: (params?: { page?: number; size?: number }) => Promise<void>;
-  createProject: (request: CreateProjectRequest) => Promise<void>;
-  saveProject: (id: string, data: UpdateProjectRequest) => Promise<void>;
-  deleteProject: (id: string) => Promise<void>;
-  fetchActivities: (projectId: string) => Promise<void>;
+  fetchProject: (id: string) => Promise<void>;
+  createProject: (request: CreateProjectRequest) => Promise<boolean>;
+  saveProject: (id: string, data: UpdateProjectRequest) => Promise<boolean>;
+  deleteProject: (id: string) => Promise<boolean>;
+  fetchActivities: (projectId: string, params?: { limit?: number }) => Promise<void>;
   setActivities: (activities: ProjectActivity[]) => void;
   addActivity: (activity: ProjectActivity) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
 }
+
+// Ids arrive from the gateway as numbers (Java Long) but from the URL as
+// strings, so every comparison goes through the string form.
+const sameId = (a: unknown, b: unknown) => String(a) === String(b);
 
 export const useProjectStore = create<ProjectState>()((set, get) => ({
   projects: [],
@@ -45,46 +51,68 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
   updateProject: (id, updates) =>
     set((state) => ({
       projects: state.projects.map((p) =>
-        p.id === id ? { ...p, ...updates } : p
+        sameId(p.id, id) ? { ...p, ...updates } : p
       ),
       currentProject:
-        state.currentProject?.id === id
+        state.currentProject && sameId(state.currentProject.id, id)
           ? { ...state.currentProject, ...updates }
           : state.currentProject,
     })),
 
   removeProject: (id) =>
     set((state) => ({
-      projects: state.projects.filter((p) => p.id !== id),
+      projects: state.projects.filter((p) => !sameId(p.id, id)),
       currentProject:
-        state.currentProject?.id === id ? null : state.currentProject,
+        state.currentProject && sameId(state.currentProject.id, id)
+          ? null
+          : state.currentProject,
     })),
 
   setCurrentProject: (currentProject) => set({ currentProject }),
 
   setCurrentProjectById: (id) =>
     set((state) => ({
-      currentProject: state.projects.find((p) => p.id === id) ?? null,
+      currentProject: state.projects.find((p) => sameId(p.id, id)) ?? null,
     })),
 
   fetchProjects: async (params) => {
     set({ isLoading: true, error: null });
     try {
       const response = await projectsApi.list(params);
-      const pageData = response.data.data;
-      const projects = pageData.content;
+      const projects = asArray<Project>(response.data.data);
       set((state) => ({
         projects,
         currentProject: state.currentProject
-          ? projects.find((p) => p.id === state.currentProject!.id) ?? state.currentProject
+          ? projects.find((p) => sameId(p.id, state.currentProject!.id)) ??
+            state.currentProject
           : projects[0] ?? null,
         isLoading: false,
       }));
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取项目列表失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取项目列表失败'),
+        isLoading: false,
+      });
+    }
+  },
+
+  fetchProject: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      const response = await projectsApi.detail(id);
+      const project = response.data.data;
+      set((state) => ({
+        projects: state.projects.some((p) => sameId(p.id, project.id))
+          ? state.projects.map((p) => (sameId(p.id, project.id) ? project : p))
+          : [project, ...state.projects],
+        currentProject: project,
+        isLoading: false,
+      }));
+    } catch (error) {
+      set({
+        error: getErrorMessage(error, '获取项目详情失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -98,11 +126,13 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
         currentProject: newProject,
         isLoading: false,
       }));
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '创建项目失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '创建项目失败'),
+        isLoading: false,
+      });
+      return false;
     }
   },
 
@@ -113,11 +143,13 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       const updated = response.data.data;
       get().updateProject(id, updated);
       set({ isLoading: false });
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '更新项目失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '更新项目失败'),
+        isLoading: false,
+      });
+      return false;
     }
   },
 
@@ -127,24 +159,28 @@ export const useProjectStore = create<ProjectState>()((set, get) => ({
       await projectsApi.delete(id);
       get().removeProject(id);
       set({ isLoading: false });
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '删除项目失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '删除项目失败'),
+        isLoading: false,
+      });
+      return false;
     }
   },
 
-  fetchActivities: async (projectId) => {
+  fetchActivities: async (projectId, params) => {
     set({ isLoading: true, error: null });
     try {
-      const response = await projectsApi.activity(projectId);
-      set({ activities: response.data.data, isLoading: false });
+      const response = await projectsApi.activity(projectId, params);
+      set({ activities: asArray<ProjectActivity>(response.data.data), isLoading: false });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取活动记录失败';
-      set({ error: message, isLoading: false });
+      set({
+        // Activity history is supplementary: keep the page usable on failure.
+        activities: [],
+        error: getErrorMessage(error, '获取活动记录失败'),
+        isLoading: false,
+      });
     }
   },
 

@@ -25,8 +25,11 @@ public:
     /// Construct an index with the given configuration.
     explicit HNSWIndex(const IndexConfig& config);
 
-    /// Construct from a serialized index file.
-    explicit HNSWIndex(const std::string& path);
+    /// Construct an index and load it from a serialized index file.
+    /// @param path    Path to the saved index file (a "<path>.meta.json"
+    ///                sidecar, if present, overrides @p config)
+    /// @param config  Configuration to use when the sidecar is missing
+    HNSWIndex(const std::string& path, const IndexConfig& config);
 
     /// Destructor — defined in the .cpp where Impl is complete.
     ~HNSWIndex();
@@ -63,10 +66,16 @@ public:
     /// Search for k nearest neighbors.
     /// @param query  Float array of size dim
     /// @param k      Number of neighbors to return
-    /// @return Vector of SearchResult sorted by ascending distance
+    /// @return Vector of SearchResult sorted by ascending distance, where the
+    ///         distance follows the configured metric: cosine distance
+    ///         (1 - cos, vectors are L2-normalized internally), Euclidean (L2)
+    ///         distance, or negative inner product.
     [[nodiscard]] std::vector<SearchResult> search(const float* query, std::size_t k) const;
 
     /// Search with a custom ef value (overrides config.ef_search for this call).
+    /// @param ef  Candidate list size; values <= 0 fall back to config.ef_search.
+    ///            Searches that change ef are serialized, because hnswlib keeps
+    ///            ef in a shared, non-atomic member.
     [[nodiscard]] std::vector<SearchResult> search(const float* query, std::size_t k, int ef) const;
 
     // ── Persistence ──────────────────────────────────────────────────────

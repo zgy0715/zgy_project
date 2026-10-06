@@ -53,11 +53,18 @@ $agentRuntimeDir = Join-Path $ProjectRoot "agent-runtime"
 if (Test-Path $agentRuntimeDir) {
     Push-Location $agentRuntimeDir
     try {
-        $pytestAvailable = $null -ne (Get-Command python -ErrorAction SilentlyContinue)
+        # Prefer the project virtualenv: the system interpreter usually does not
+        # have the agent-runtime dependencies installed.
+        $venvPython = Join-Path $agentRuntimeDir ".venv\Scripts\python.exe"
+        $pythonCmd = if (Test-Path $venvPython) { $venvPython } else { "python" }
+
+        $pytestAvailable = $null -ne (Get-Command $pythonCmd -ErrorAction SilentlyContinue)
         if ($pytestAvailable) {
-            $pytestCheck = python -m pytest --version 2>&1
+            $pytestCheck = & $pythonCmd -m pytest --version 2>&1
             if ($LASTEXITCODE -eq 0) {
-                $testResult = python -m pytest tests/test_integration.py tests/test_api_contracts.py -v --tb=short -m "not slow" 2>&1
+                # test_performance.py asserts machine-dependent timings, so it is
+                # excluded from the e2e gate (run it explicitly when needed).
+                $testResult = & $pythonCmd -m pytest tests/ --ignore=tests/test_performance.py -v --tb=short -m "not slow" 2>&1
                 if ($LASTEXITCODE -eq 0) {
                     Write-Host "[2/4] Agent Runtime tests PASSED" -ForegroundColor Green
                 } else {

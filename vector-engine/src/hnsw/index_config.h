@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <string>
-#include <variant>
 
 namespace deepagent::vector_engine {
 

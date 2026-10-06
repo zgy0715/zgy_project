@@ -1,12 +1,10 @@
 'use client';
 
-import { use } from 'react';
+import { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Bot,
   GitBranch,
-  MessageSquare,
-  FileCode2,
   Clock,
   Play,
   Plus,
@@ -16,6 +14,8 @@ import {
   AlertTriangle,
   FileText,
   Settings,
+  User,
+  Loader2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,22 +23,10 @@ import { useProjectStore } from '@/stores/project-store';
 import { useAgentStore } from '@/stores/agent-store';
 import { useWorkflowStore } from '@/stores/workflow-store';
 import { cn, formatRelativeTime, formatCompactNumber } from '@/lib/utils';
+import { projectStatusLabel, projectStatusVariant } from '@/types';
 import type { ProjectActivity } from '@/types';
 
-// Status badge variant mapping
-const statusVariantMap: Record<string, 'success' | 'warning' | 'secondary'> = {
-  active: 'success',
-  draft: 'warning',
-  archived: 'secondary',
-};
-
-const statusLabelMap: Record<string, string> = {
-  active: '活跃',
-  draft: '草稿',
-  archived: '已归档',
-};
-
-// Activity icon mapping
+// Activity icon mapping (action keys are lower_snake_case from the gateway)
 const activityIconMap: Record<string, React.ElementType> = {
   completed_tests: CheckCircle,
   approved_code: CheckCircle,
@@ -55,37 +43,70 @@ const activityColorMap: Record<string, string> = {
   flagged_issue: 'text-amber-400',
 };
 
-// Role label mapping
-const roleLabelMap: Record<string, string> = {
-  owner: '负责人',
-  admin: '管理员',
-  developer: '开发者',
-  viewer: '观察者',
+const actionLabelMap: Record<string, string> = {
+  completed_tests: '完成测试',
+  approved_code: '审批通过',
+  generated_code: '生成代码',
+  created_config: '创建配置',
+  flagged_issue: '标记问题',
 };
 
 export default function ProjectDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = use(params);
-  const project = useProjectStore((s) => s.projects.find((p) => p.id === id));
-  const agents = useAgentStore((s) => s.agents.filter((a) => a.projectId === id));
-  const workflows = useWorkflowStore((s) => s.workflows.filter((w) => !w.projectId || w.projectId === id));
-  const activities = useProjectStore((s) =>
-    s.activities.filter((a) => a.projectId === id)
+  const { id } = params;
+  const project = useProjectStore((s) =>
+    s.projects.find((p) => String(p.id) === String(id))
   );
+  const fetchProject = useProjectStore((s) => s.fetchProject);
+  const fetchActivities = useProjectStore((s) => s.fetchActivities);
+  const activities = useProjectStore((s) => s.activities);
+  const isLoading = useProjectStore((s) => s.isLoading);
+  const error = useProjectStore((s) => s.error);
+
+  const allAgents = useAgentStore((s) => s.agents);
+  const fetchAgents = useAgentStore((s) => s.fetchAgents);
+  const allWorkflows = useWorkflowStore((s) => s.workflows);
+  const fetchWorkflows = useWorkflowStore((s) => s.fetchWorkflows);
+
+  // Load this project (detail + activity) and its agent/workflow counts.
+  useEffect(() => {
+    fetchProject(id);
+    fetchActivities(id, { limit: 20 });
+    fetchAgents(id);
+    fetchWorkflows(id);
+  }, [id, fetchProject, fetchActivities, fetchAgents, fetchWorkflows]);
+
+  const agents = useMemo(
+    () =>
+      allAgents.filter((a) => !a.projectId || String(a.projectId) === String(id)),
+    [allAgents, id]
+  );
+  const workflows = useMemo(
+    () =>
+      allWorkflows.filter((w) => String(w.projectId) === String(id)),
+    [allWorkflows, id]
+  );
+
+  const recentActivities = activities.slice(0, 5);
+  const lastActivityAt = activities[0]?.timestamp;
 
   if (!project) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-zinc-500">项目不存在</p>
+      <div className="flex flex-col items-center justify-center h-full gap-2">
+        {isLoading ? (
+          <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
+        ) : (
+          <>
+            <p className="text-zinc-500">项目不存在</p>
+            {error && <p className="text-xs text-red-400">{error}</p>}
+          </>
+        )}
       </div>
     );
   }
-
-  const stats = project.stats;
-  const recentActivities = activities.slice(0, 5);
 
   return (
     <div className="space-y-6 overflow-y-auto h-full pb-6">
@@ -97,27 +118,13 @@ export default function ProjectDetailPage({
             <div>
               <div className="flex items-center gap-3">
                 <h2 className="text-xl font-bold text-white">{project.name}</h2>
-                <Badge variant={statusVariantMap[project.status] ?? 'secondary'}>
-                  {statusLabelMap[project.status] ?? project.status}
+                <Badge variant={projectStatusVariant(project.status)}>
+                  {projectStatusLabel(project.status)}
                 </Badge>
               </div>
               <p className="text-sm text-zinc-400 mt-2">{project.description}</p>
             </div>
           </div>
-
-          {/* Tech Stack */}
-          {project.techStack && project.techStack.length > 0 && (
-            <div className="mt-4 flex items-center gap-2 flex-wrap">
-              {project.techStack.map((tech) => (
-                <span
-                  key={tech}
-                  className="px-2.5 py-1 text-xs font-medium bg-brand-600/15 text-brand-400 rounded-lg"
-                >
-                  {tech}
-                </span>
-              ))}
-            </div>
-          )}
 
           {/* Quick Actions */}
           <div className="mt-6 flex items-center gap-3">
@@ -142,68 +149,63 @@ export default function ProjectDetailPage({
           </div>
         </div>
 
-        {/* Team Members Card */}
+        {/* Project Metadata Card */}
         <div className="bg-surface-1 border border-surface-3 rounded-xl p-6">
-          <h3 className="text-sm font-medium text-white mb-4">团队成员</h3>
-          {project.members && project.members.length > 0 ? (
-            <div className="space-y-3">
-              {project.members.map((member) => (
-                <div key={member.userId} className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-brand-600/20 flex items-center justify-center text-brand-400 text-xs font-medium overflow-hidden">
-                    {member.avatar ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={member.avatar}
-                        alt={member.username}
-                        className="w-8 h-8 rounded-full"
-                      />
-                    ) : (
-                      member.username.slice(0, 2).toUpperCase()
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white truncate">{member.username}</p>
-                    <p className="text-xs text-zinc-500">{roleLabelMap[member.role] ?? member.role}</p>
-                  </div>
-                </div>
-              ))}
+          <h3 className="text-sm font-medium text-white mb-4">项目信息</h3>
+          <dl className="space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-zinc-500">负责人 ID</dt>
+              <dd className="flex items-center gap-1.5 text-white">
+                <User className="w-3.5 h-3.5 text-zinc-500" />
+                {project.ownerId ?? '-'}
+              </dd>
             </div>
-          ) : (
-            <p className="text-sm text-zinc-500">暂无成员</p>
-          )}
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-zinc-500">默认 Agent</dt>
+              <dd className="text-white">{project.agentType ?? '-'}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-zinc-500">创建时间</dt>
+              <dd className="text-white">{formatRelativeTime(project.createdAt)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-zinc-500">更新时间</dt>
+              <dd className="text-white">{formatRelativeTime(project.updatedAt)}</dd>
+            </div>
+          </dl>
         </div>
       </div>
 
+      {error && (
+        <div className="px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-400">
+          {error}
+        </div>
+      )}
+
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           icon={Bot}
           label="Agent 数量"
-          value={stats?.totalAgents ?? agents.length}
+          value={agents.length}
           color="text-brand-400"
         />
         <StatCard
           icon={GitBranch}
           label="工作流数量"
-          value={stats?.totalWorkflows ?? workflows.length}
+          value={workflows.length}
           color="text-green-400"
         />
         <StatCard
-          icon={MessageSquare}
-          label="对话数量"
-          value={stats?.totalConversations ?? 0}
+          icon={FileText}
+          label="活动记录"
+          value={activities.length}
           color="text-blue-400"
-        />
-        <StatCard
-          icon={FileCode2}
-          label="代码文件"
-          value={stats?.codeFiles ?? 0}
-          color="text-amber-400"
         />
         <StatCard
           icon={Clock}
           label="最近活动"
-          value={stats?.lastActivityAt ? formatRelativeTime(stats.lastActivityAt) : '无'}
+          value={lastActivityAt ? formatRelativeTime(lastActivityAt) : '无'}
           color="text-zinc-400"
           isText
         />
@@ -285,14 +287,6 @@ function StatCard({
 function ActivityItem({ activity }: { activity: ProjectActivity }) {
   const IconComponent = activityIconMap[activity.action] ?? FileText;
   const iconColor = activityColorMap[activity.action] ?? 'text-zinc-400';
-
-  const actionLabelMap: Record<string, string> = {
-    completed_tests: '完成测试',
-    approved_code: '审批通过',
-    generated_code: '生成代码',
-    created_config: '创建配置',
-    flagged_issue: '标记问题',
-  };
 
   return (
     <div className="flex items-start gap-3">

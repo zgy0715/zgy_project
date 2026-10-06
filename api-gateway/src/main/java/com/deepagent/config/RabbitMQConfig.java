@@ -13,6 +13,7 @@ import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 
 /**
  * RabbitMQ configuration for asynchronous event-driven messaging.
@@ -185,6 +186,11 @@ public class RabbitMQConfig {
         factory.setConcurrentConsumers(2);
         factory.setMaxConcurrentConsumers(10);
         factory.setPrefetchCount(10);
+        // 让消费者跑在虚拟线程上（Spring 6.1+ 支持）；实际并发仍由
+        // concurrentConsumers/maxConcurrentConsumers 限制。
+        var taskExecutor = new SimpleAsyncTaskExecutor("rabbit-listener-");
+        taskExecutor.setVirtualThreads(true);
+        factory.setTaskExecutor(taskExecutor);
         return factory;
     }
 }

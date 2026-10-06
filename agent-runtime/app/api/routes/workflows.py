@@ -19,6 +19,7 @@ from app.models.schemas import (
     WorkflowExecutionResponse,
     WorkflowNode,
     WorkflowResponse,
+    WorkflowUpdateRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,8 @@ async def create_workflow(request: WorkflowCreateRequest) -> WorkflowResponse:
     Returns:
         WorkflowResponse with the created workflow details.
     """
-    from datetime import datetime
     import uuid
+    from datetime import datetime
 
     workflow_id = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -134,6 +135,57 @@ async def get_workflow(workflow_id: str) -> WorkflowResponse:
     return _build_workflow_response(_workflows[workflow_id])
 
 
+@router.put("/{workflow_id}", response_model=WorkflowResponse)
+async def update_workflow(
+    workflow_id: str,
+    request: WorkflowUpdateRequest,
+) -> WorkflowResponse:
+    """Update an existing workflow definition.
+
+    Args:
+        workflow_id: Unique identifier of the workflow.
+        request: Fields to update; omitted fields keep their current value.
+            When provided, ``nodes``/``edges`` replace the previous definition.
+
+    Returns:
+        WorkflowResponse with the updated workflow details.
+
+    Raises:
+        HTTPException: If the workflow is not found.
+    """
+    from datetime import datetime
+
+    workflow_data = _workflows.get(workflow_id)
+    if workflow_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow {workflow_id} not found",
+        )
+
+    if request.name is not None:
+        workflow_data["name"] = request.name
+    if request.description is not None:
+        workflow_data["description"] = request.description
+    # ``nodes`` and the gateway's ``definition`` key are interchangeable.
+    updated_nodes = request.resolved_nodes()
+    if updated_nodes is not None:
+        workflow_data["nodes"] = list(updated_nodes)
+    if request.edges is not None:
+        workflow_data["edges"] = list(request.edges)
+    if request.status is not None:
+        workflow_data["status"] = request.status
+    workflow_data["updated_at"] = datetime.utcnow()
+
+    logger.info(
+        "Updated workflow %s (%d nodes, %d edges)",
+        workflow_id,
+        len(workflow_data.get("nodes", [])),
+        len(workflow_data.get("edges", [])),
+    )
+
+    return _build_workflow_response(workflow_data)
+
+
 @router.post("/{workflow_id}/execute", response_model=WorkflowExecutionResponse)
 async def execute_workflow(
     workflow_id: str,
@@ -172,9 +224,18 @@ async def execute_workflow(
     try:
         engine = _get_engine()
 
-        # Check if the workflow has custom node/edge definitions
-        custom_nodes = workflow_data.get("nodes", [])
-        custom_edges = workflow_data.get("edges", [])
+        # Check if the workflow has custom node/edge definitions.
+        # Stored entries may be WorkflowNode/WorkflowEdge models (created through
+        # this API) or plain dicts; the graph builder indexes them as mappings
+        # with snake_case keys, so normalise both shapes here.
+        custom_nodes = [
+            node.model_dump(mode="json") if hasattr(node, "model_dump") else node
+            for node in workflow_data.get("nodes", [])
+        ]
+        custom_edges = [
+            edge.model_dump(mode="json") if hasattr(edge, "model_dump") else edge
+            for edge in workflow_data.get("edges", [])
+        ]
 
         if custom_nodes:
             # Use custom DAG execution when workflow defines its own nodes/edges
@@ -196,6 +257,33 @@ async def execute_workflow(
                 context=request.context,
             )
 
+        # Determine the real outcome instead of assuming success: the engine
+        # swallows graph-level exceptions and reports them through the returned
+        # state's "status"/"errors" keys.
+        raw_errors = result.get("errors")
+        error_list = (
+            [str(err) for err in raw_errors]
+            if isinstance(raw_errors, (list, tuple))
+            else []
+        )
+        engine_failed = (
+            str(result.get("status", "")).lower() == "failed" or bool(error_list)
+        )
+        if engine_failed:
+            error_detail = "; ".join(error_list)
+            if not error_detail:
+                error_detail = "Workflow graph execution reported a failed status"
+            workflow_data["status"] = WorkflowStatus.FAILED
+            logger.error(
+                "Workflow %s graph execution failed: %s", workflow_id, error_detail
+            )
+            return WorkflowExecutionResponse(
+                workflow_id=workflow_id,
+                status=WorkflowStatus.FAILED,
+                results=result,
+                error=error_detail,
+            )
+
         workflow_data["status"] = WorkflowStatus.COMPLETED
 
         return WorkflowExecutionResponse(
@@ -205,14 +293,28 @@ async def execute_workflow(
             error=None,
         )
 
-    except Exception as e:
+    except HTTPException:
         workflow_data["status"] = WorkflowStatus.FAILED
-        logger.error("Workflow %s execution failed: %s", workflow_id, str(e))
+        raise
+    except ValueError as e:
+        # Configuration errors are actionable for the caller and contain no
+        # internals (for example an unknown agent type).
+        workflow_data["status"] = WorkflowStatus.FAILED
+        logger.warning("Workflow %s execution rejected: %s", workflow_id, str(e))
         return WorkflowExecutionResponse(
             workflow_id=workflow_id,
             status=WorkflowStatus.FAILED,
             results={},
             error=str(e),
+        )
+    except Exception as e:
+        workflow_data["status"] = WorkflowStatus.FAILED
+        logger.exception("Workflow %s execution failed: %s", workflow_id, str(e))
+        return WorkflowExecutionResponse(
+            workflow_id=workflow_id,
+            status=WorkflowStatus.FAILED,
+            results={},
+            error="Workflow execution failed due to an internal error",
         )
 
 

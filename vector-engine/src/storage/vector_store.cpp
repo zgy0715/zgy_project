@@ -4,6 +4,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -23,8 +25,11 @@ public:
     {}
 
     int64_t insert(const std::vector<float>& vector, const std::string& metadata) {
-        auto id = next_id_++;
-        index_.insert(vector.data(), id);
+        check_dim(vector);
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        // Let the index hand out the id: it keeps its own monotonic label
+        // counter that is also restored on load, so ids are never reused.
+        auto id = index_.insert(vector.data(), std::nullopt);
         meta_.put(id, metadata);
         vectors_[id] = vector;
         return id;
@@ -33,29 +38,41 @@ public:
     std::vector<int64_t> batch_insert(
         const std::vector<std::pair<std::vector<float>, std::string>>& records)
     {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        ensure_capacity_locked(index_.size() + records.size());
         std::vector<int64_t> ids;
         ids.reserve(records.size());
-        for (const auto& [vec, meta] : records) {
-            ids.push_back(insert(vec, meta));
+        for (const auto& record : records) {
+            check_dim(record.first);
+            auto id = index_.insert(record.first.data(), std::nullopt);
+            meta_.put(id, record.second);
+            vectors_[id] = record.first;
+            ids.push_back(id);
         }
         return ids;
+    }
+
+    void ensure_capacity(std::size_t required) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        ensure_capacity_locked(required);
     }
 
     bool update(int64_t id, const std::vector<float>& vector,
                 const std::string& metadata)
     {
+        check_dim(vector);
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         if (!meta_.exists(id)) return false;
-        // hnswlib does not support in-place update; mark old and re-add
-        // For simplicity, we just overwrite the stored vector and metadata
+        // hnswlib's addPoint() updates an existing label in place and repairs
+        // the graph links, so the new vector is visible to searches.
+        index_.insert(vector.data(), id);
         meta_.put(id, metadata);
         vectors_[id] = vector;
-        // Note: the HNSW index still has the old vector; a full rebuild
-        // would be needed for correct search results. This is a known
-        // limitation of the current skeleton.
         return true;
     }
 
     bool remove(int64_t id) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
         if (!meta_.exists(id)) return false;
         meta_.remove(id);
         vectors_.erase(id);
@@ -64,6 +81,7 @@ public:
     }
 
     std::optional<VectorRecord> get(int64_t id) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
         auto meta = meta_.get(id);
         if (!meta) return std::nullopt;
         auto it = vectors_.find(id);
@@ -76,8 +94,143 @@ public:
     }
 
     std::vector<SearchHit> search(const std::vector<float>& query,
+                                   std::size_t k) const {
+        check_dim(query);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return collect(index_.search(query.data(), k));
+    }
+
+    std::vector<SearchHit> search(const std::vector<float>& query,
                                    std::size_t k, int ef) const {
-        auto results = index_.search(query.data(), k, ef);
+        check_dim(query);
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return collect(index_.search(query.data(), k, ef));
+    }
+
+    void save(const std::string& directory) const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+
+        std::error_code ec;
+        fs::create_directories(directory, ec);
+        if (ec && !fs::is_directory(directory)) {
+            throw std::runtime_error("Cannot create store directory: " + directory);
+        }
+
+        index_.save((fs::path(directory) / "index.bin").string());
+        meta_.save((fs::path(directory) / "metadata.json").string());
+
+        // Persist the raw vectors so get() survives a reload.
+        nlohmann::json vectors_json = nlohmann::json::object();
+        for (const auto& entry : vectors_) {
+            nlohmann::json vec_json = nlohmann::json::array();
+            for (float v : entry.second) {
+                vec_json.push_back(v);
+            }
+            vectors_json[std::to_string(entry.first)] = std::move(vec_json);
+        }
+
+        const std::string vectors_path = (fs::path(directory) / "vectors.json").string();
+        std::ofstream ofs(vectors_path, std::ios::binary | std::ios::trunc);
+        if (!ofs) {
+            throw std::runtime_error("Cannot open file for writing: " + vectors_path);
+        }
+        ofs << vectors_json.dump(2);
+        ofs.flush();
+        if (!ofs) {
+            throw std::runtime_error("Failed to write vectors file: " + vectors_path);
+        }
+    }
+
+    void load(const std::string& directory) {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+
+        index_.load((fs::path(directory) / "index.bin").string());
+        meta_.load((fs::path(directory) / "metadata.json").string());
+
+        const std::string vectors_path = (fs::path(directory) / "vectors.json").string();
+        std::ifstream ifs(vectors_path, std::ios::binary);
+        if (!ifs) {
+            // Older saves may not contain vectors.json: metadata still works,
+            // get() will simply have no raw vector to return.
+            vectors_.clear();
+            return;
+        }
+
+        nlohmann::json vectors_json;
+        try {
+            ifs >> vectors_json;
+        } catch (const nlohmann::json::exception& e) {
+            throw std::runtime_error("Corrupt vectors file '" + vectors_path + "': " + e.what());
+        }
+        if (!vectors_json.is_object()) {
+            throw std::runtime_error("Corrupt vectors file '" + vectors_path +
+                                     "': expected a JSON object");
+        }
+
+        std::unordered_map<int64_t, std::vector<float>> loaded;
+        loaded.reserve(vectors_json.size());
+        for (auto it = vectors_json.begin(); it != vectors_json.end(); ++it) {
+            int64_t id = 0;
+            if (!parse_id(it.key(), id)) {
+                continue; // skip non-numeric keys
+            }
+            if (!it.value().is_array() ||
+                it.value().size() != static_cast<std::size_t>(config().dim)) {
+                throw std::runtime_error("Corrupt vectors file '" + vectors_path +
+                                         "': entry " + it.key() + " has an unexpected dimension");
+            }
+            std::vector<float> vec;
+            vec.reserve(it.value().size());
+            for (const auto& v : it.value()) {
+                vec.push_back(v.get<float>());
+            }
+            loaded[id] = std::move(vec);
+        }
+        vectors_.swap(loaded);
+    }
+
+    std::size_t size() const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return index_.size();
+    }
+
+    std::size_t capacity() const {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return index_.capacity();
+    }
+
+    const IndexConfig& config() const { return index_.config(); }
+
+private:
+    HNSWIndex                          index_;
+    MetadataManager                    meta_;
+    std::unordered_map<int64_t, std::vector<float>> vectors_;
+
+    /// Guards index_, meta_ and vectors_: shared for reads (search/get),
+    /// exclusive for mutations (insert/update/remove/load/save).
+    mutable std::shared_mutex mutex_;
+
+    void check_dim(const std::vector<float>& vector) const {
+        if (vector.size() != static_cast<std::size_t>(config().dim)) {
+            throw std::invalid_argument(
+                "Vector dimension mismatch: expected " + std::to_string(config().dim) +
+                ", got " + std::to_string(vector.size()));
+        }
+    }
+
+    /// Grow the index capacity so that @p required elements fit. The caller
+    /// must already hold the unique lock.
+    void ensure_capacity_locked(std::size_t required) {
+        std::size_t target = index_.capacity();
+        if (required <= target) return;
+        if (target == 0) target = required;
+        while (target < required) {
+            target *= 2;
+        }
+        index_.resize(target);
+    }
+
+    std::vector<SearchHit> collect(const std::vector<SearchResult>& results) const {
         std::vector<SearchHit> hits;
         hits.reserve(results.size());
         for (const auto& r : results) {
@@ -91,67 +244,15 @@ public:
         return hits;
     }
 
-    void save(const std::string& directory) const {
-        fs::create_directories(directory);
-        index_.save((fs::path(directory) / "index.bin").string());
-        meta_.save((fs::path(directory) / "metadata.json").string());
-
-        // Save vectors_ and next_id_ for full state restoration
+    static bool parse_id(const std::string& key, int64_t& id) {
         try {
-            nlohmann::json vectors_json = nlohmann::json::object();
-            for (const auto& [id, vec] : vectors_) {
-                nlohmann::json vec_json = nlohmann::json::array();
-                for (float v : vec) {
-                    vec_json.push_back(v);
-                }
-                vectors_json[std::to_string(id)] = vec_json;
-            }
-            vectors_json["__next_id__"] = next_id_;
-
-            std::ofstream ofs((fs::path(directory) / "vectors.json").string());
-            ofs << vectors_json.dump(2);
+            std::size_t consumed = 0;
+            id = std::stoll(key, &consumed);
+            return consumed == key.size();
         } catch (const std::exception&) {
-            // Log but don't fail the save
+            return false;
         }
     }
-
-    void load(const std::string& directory) {
-        index_.load((fs::path(directory) / "index.bin").string());
-        meta_.load((fs::path(directory) / "metadata.json").string());
-
-        // Restore vectors_ and next_id_
-        try {
-            std::ifstream ifs((fs::path(directory) / "vectors.json").string());
-            if (ifs.is_open()) {
-                auto vectors_json = nlohmann::json::parse(ifs);
-                vectors_.clear();
-                for (auto it = vectors_json.begin(); it != vectors_json.end(); ++it) {
-                    if (it.key() == "__next_id__") {
-                        next_id_ = it.value().get<int64_t>();
-                        continue;
-                    }
-                    int64_t id = std::stoll(it.key());
-                    std::vector<float> vec;
-                    for (const auto& v : it.value()) {
-                        vec.push_back(v.get<float>());
-                    }
-                    vectors_[id] = std::move(vec);
-                }
-            }
-        } catch (const std::exception&) {
-            // vectors.json may not exist in older saves; that's OK
-        }
-    }
-
-    std::size_t size() const { return index_.size(); }
-    std::size_t capacity() const { return index_.capacity(); }
-    const IndexConfig& config() const { return index_.config(); }
-
-private:
-    HNSWIndex                          index_;
-    MetadataManager                    meta_;
-    std::unordered_map<int64_t, std::vector<float>> vectors_;
-    int64_t                            next_id_ = 0;
 };
 
 // ── VectorStore forwarding ──────────────────────────────────────────────────
@@ -195,7 +296,7 @@ std::optional<VectorRecord> VectorStore::get(int64_t id) const {
 
 std::vector<VectorStore::SearchHit> VectorStore::search(
     const std::vector<float>& query, std::size_t k) const {
-    return impl_->search(query, k, impl_->config().ef_search);
+    return impl_->search(query, k);
 }
 
 std::vector<VectorStore::SearchHit> VectorStore::search(
@@ -209,6 +310,10 @@ void VectorStore::save(const std::string& directory) const {
 
 void VectorStore::load(const std::string& directory) {
     impl_->load(directory);
+}
+
+void VectorStore::ensure_capacity(std::size_t required) {
+    impl_->ensure_capacity(required);
 }
 
 std::size_t VectorStore::size() const { return impl_->size(); }

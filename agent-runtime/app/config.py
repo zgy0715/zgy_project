@@ -1,4 +1,4 @@
-﻿"""Application configuration management using Pydantic BaseSettings."""
+"""Application configuration management using Pydantic BaseSettings."""
 
 import os
 from functools import lru_cache
@@ -57,10 +57,19 @@ class VectorEngineConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_")
 
-    engine_url: str = "http://localhost:8080"
+    # NOTE: this must not share a port with the API Gateway (see
+    # AppConfig.cors_origins, which defaults to the gateway on 8080).
+    engine_url: str = "http://localhost:8081"
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = Field(default=1536, ge=1)
     index_type: Literal["flat", "ivf", "hnsw"] = "hnsw"
+    # Env var: VECTOR_ENGINE_VERIFY_SSL. Never disable TLS verification outside
+    # local development; the HTTP client fails closed (see
+    # app/services/vector_service.py::_make_client).
+    engine_verify_ssl: bool = Field(
+        default=True,
+        description="Verify TLS certificates when calling the vector engine over HTTP.",
+    )
 
 
 class SecurityConfig(BaseSettings):
@@ -85,6 +94,17 @@ class SecurityConfig(BaseSettings):
     internal_api_key: str = Field(
         default="",
         description="API key for authenticating requests from the API Gateway.",
+    )
+    # Development/test escape hatch: the runtime refuses every non-public request
+    # while `internal_api_key` is empty. Setting this to True restores the old
+    # (insecure) behaviour of serving unauthenticated requests, and is only
+    # intended for local development and the test suite.
+    allow_insecure_no_auth: bool = Field(
+        default=False,
+        description=(
+            "Development only: serve unauthenticated requests when "
+            "internal_api_key is empty. Never enable in production."
+        ),
     )
 
 

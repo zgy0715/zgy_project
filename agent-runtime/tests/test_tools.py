@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -50,10 +51,16 @@ class TestFileReadTool:
             os.unlink(temp_path)
 
     @pytest.mark.asyncio
-    async def test_read_nonexistent_file(self) -> None:
-        """Test reading a file that doesn't exist."""
+    async def test_read_nonexistent_file(self, tmp_path: Path) -> None:
+        """Test reading a file that doesn't exist inside an allowed directory.
+
+        The allow-list check comes first and fails closed, so the path must be
+        inside an allowed directory (``tmp_path`` lives under the system temp
+        directory, which ``tests/conftest.py`` adds to the allow-list) for the
+        tool to reach its "not found" branch.
+        """
         tool = FileReadTool()
-        result = await tool.run(path="/nonexistent/file.txt")
+        result = await tool.run(path=str(tmp_path / "does-not-exist.txt"))
         assert result.success is False
         assert "not found" in result.error.lower()
 

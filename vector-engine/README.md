@@ -8,8 +8,9 @@ High-performance vector search engine module for the DeepAgent multi-AI-agent co
 - **Code Embedding** — Source code tokenization and embedding with multiple split strategies (by function, class, block, line)
 - **Vector Store** — High-level CRUD storage layer with metadata management and incremental updates
 - **Distance Utilities** — Cosine, Euclidean, and inner product distance calculations
-- **Thread Pool** — Parallel search support via a built-in thread pool
-- **Python Bindings** — Full pybind11 exposure of HNSWIndex, CodeEmbedder, VectorStore, and distance utilities
+- **Engine Facade** — Collection-based `Engine` API (`embed` / `embed_batch` / `index` / `search`) — the surface the Python service uses
+- **Thread Pool** — Parallel embedding for non-stub backends (the scalar distance functions themselves are not parallelised)
+- **Python Bindings** — pybind11 exposure of `Engine`, `HNSWIndex`, `CodeEmbedder`, `Tokenizer`, `VectorStore` and the distance utilities
 - **Persistence** — Save/load index and metadata to disk
 
 ## Project Structure
@@ -17,14 +18,15 @@ High-performance vector search engine module for the DeepAgent multi-AI-agent co
 ```
 vector-engine/
 ├── CMakeLists.txt              # Top-level CMake configuration
-├── cmake/
-│   └── FindHnswlib.cmake       # CMake module for finding hnswlib
 ├── third_party/
 │   └── CMakeLists.txt          # Third-party dependency management
 ├── include/
 │   └── deepagent/
 │       └── vector_engine.h     # Unified public header
 ├── src/
+│   ├── engine/
+│   │   ├── engine.h            # Collection-based Engine facade
+│   │   └── engine.cpp          # Engine facade implementation
 │   ├── hnsw/
 │   │   ├── index_config.h      # Index configuration struct
 │   │   ├── hnsw_index.h        # HNSW index class declaration
@@ -53,7 +55,10 @@ vector-engine/
     ├── CMakeLists.txt          # Test build configuration
     ├── test_hnsw.cpp           # HNSW index unit tests
     ├── test_embedder.cpp       # Embedder unit tests
-    └── test_distance.cpp       # Distance calculation tests
+    ├── test_distance.cpp       # Distance calculation tests
+    ├── test_storage.cpp        # Store persistence, id and validation tests
+    ├── test_engine.cpp         # Engine facade tests
+    └── test_performance.cpp    # Benchmarks (built as `test_performance`)
 ```
 
 ## Build
@@ -68,19 +73,34 @@ vector-engine/
 ### Build Commands
 
 ```bash
-# Configure
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+# Configure (run from the repository root; pass -S . -B build from inside
+# vector-engine/ instead)
+cmake -S vector-engine -B vector-engine/build -DCMAKE_BUILD_TYPE=Release
 
-# Build library and tests
-cmake --build build --config Release
+# Build library, tests and the Python extension
+cmake --build vector-engine/build --config Release --parallel
 
 # Run tests
-cd build && ctest --output-on-failure
+ctest --test-dir vector-engine/build --output-on-failure
 
-# Build with Python bindings
-cmake -B build -DVECTOR_ENGINE_BUILD_BINDINGS=ON
-cmake --build build --config Release
+# Skip the optional parts
+cmake -S vector-engine -B vector-engine/build -DVECTOR_ENGINE_BUILD_TESTS=OFF
+cmake -S vector-engine -B vector-engine/build -DVECTOR_ENGINE_BUILD_BINDINGS=OFF
 ```
+
+### Dependencies
+
+`third_party/CMakeLists.txt` looks for a local copy first and only falls back to
+`FetchContent` (which needs network access) when it cannot find one:
+
+| Dependency | Local location | Override variable |
+|------------|----------------|-------------------|
+| hnswlib headers (`hnswlib/hnswalg.h`) | `third_party/hnswlib/` | `VE_HNSWLIB_INCLUDE_DIR` |
+| nlohmann/json | `third_party/json/` | `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` |
+| pybind11 | `third_party/pybind11/` | `FETCHCONTENT_SOURCE_DIR_PYBIND11` |
+
+The Python extension is built as `vector_engine.so` (`.pyd` on Windows) so that
+`import vector_engine` matches `PYBIND11_MODULE(vector_engine, m)`.
 
 ### CMake Options
 
@@ -95,6 +115,21 @@ cmake --build build --config Release
 ```python
 import vector_engine
 
+# ── High-level facade (the API the service layer uses) ────────────────────
+engine = vector_engine.Engine(embedding_dim=384)          # backend="dummy" by default
+vector = engine.embed("def hello(): pass")                # -> list[float]
+batch = engine.embed_batch(["a", "b"])                    # -> list[list[float]]
+
+indexed = engine.index(
+    [{"id": "doc-1", "content": "def hello(): pass", "metadata": {"lang": "python"}}],
+    "code",
+)                                                         # -> 1
+
+hits = engine.search("hello", top_k=5, collection="code", filters={"lang": "python"})
+# -> [{"id": "doc-1", "content": "...", "metadata": {"lang": "python"},
+#      "score": 1.0, "distance": 0.0}]
+
+# ── Low-level building blocks ─────────────────────────────────────────────
 # Create index config
 config = vector_engine.IndexConfig()
 config.dim = 128
@@ -116,7 +151,14 @@ embedding = embedder.embed("def hello(): pass")
 dist = vector_engine.cosine_distance([1.0, 0.0], [0.0, 1.0])
 ```
 
-## Dependencies (auto-fetched via CMake FetchContent)
+Metric conventions: `HNSWIndex.search` returns metric distances
+(cosine: `1 - cos`; Euclidean: L2; inner product: `-dot`), while `Engine.search`
+additionally reports a `score` that grows with similarity.
+
+## Third-party libraries
+
+Versions used when no local copy is present in `third_party/` (see
+[Dependencies](#dependencies) above):
 
 | Library | Version | Purpose |
 |---------|---------|---------|

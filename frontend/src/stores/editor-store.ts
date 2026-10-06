@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import type { ProjectFile } from '@/types';
 import { projectsApi } from '@/lib/api-client';
-import { generateId, getLanguageFromPath } from '@/lib/utils';
+import { generateId, getLanguageFromPath, asArray, getErrorMessage } from '@/lib/utils';
 
 interface EditorTab {
   id: string;
@@ -15,10 +15,13 @@ interface EditorTab {
 }
 
 interface EditorState {
+  projectId: string | null;
   files: ProjectFile[];
   openTabs: EditorTab[];
   activeTabId: string | null;
   fileContent: Record<string, string>;
+  /** Last content loaded from / saved to the gateway — the diff baseline. */
+  originalContent: Record<string, string>;
   expandedDirs: Set<string>;
   isDiffMode: boolean;
   isLoading: boolean;
@@ -33,9 +36,9 @@ interface EditorState {
   toggleDir: (path: string) => void;
   selectFile: (path: string) => void;
   toggleDiffMode: () => void;
-  createFile: (parentPath: string, name: string, type: 'file' | 'directory') => void;
-  deleteFile: (path: string) => void;
-  renameFile: (path: string, newName: string) => void;
+  createFile: (parentPath: string, name: string, type: 'file' | 'directory') => Promise<boolean>;
+  deleteFile: (path: string) => Promise<boolean>;
+  renameFile: (path: string, newName: string) => Promise<boolean>;
 
   // API actions
   fetchFileTree: (projectId: string) => Promise<void>;
@@ -45,6 +48,40 @@ interface EditorState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
+}
+
+// Helper: the gateway may return either a nested tree or a flat list of files
+// carrying slash-separated paths. Normalise both into a nested tree.
+function normalizeFiles(raw: ProjectFile[]): ProjectFile[] {
+  if (raw.some((f) => f.children && f.children.length > 0)) return raw;
+
+  const byPath = new Map<string, ProjectFile>();
+  const roots: ProjectFile[] = [];
+  const normalized = raw.map((f) => ({
+    ...f,
+    path: f.path ?? f.name,
+    children: f.children ? [...f.children] : undefined,
+  }));
+
+  for (const file of normalized) {
+    byPath.set(file.path, file);
+  }
+
+  for (const file of normalized) {
+    const lastSlash = file.path.lastIndexOf('/');
+    if (lastSlash < 0) {
+      roots.push(file);
+      continue;
+    }
+    const parent = byPath.get(file.path.slice(0, lastSlash));
+    if (parent && parent.type === 'directory') {
+      parent.children = [...(parent.children ?? []), file];
+    } else {
+      roots.push(file);
+    }
+  }
+
+  return roots;
 }
 
 // Helper: find a file by path in the nested tree
@@ -122,8 +159,10 @@ function collectPaths(files: ProjectFile[]): string[] {
 }
 
 export const useEditorStore = create<EditorState>()((set, get) => ({
+  projectId: null,
   files: [],
   fileContent: {},
+  originalContent: {},
   expandedDirs: new Set<string>(),
   openTabs: [],
   activeTabId: null,
@@ -203,146 +242,204 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
   toggleDiffMode: () =>
     set((state) => ({ isDiffMode: !state.isDiffMode })),
 
-  createFile: (parentPath, name, type) =>
-    set((state) => {
-      const id = generateId();
-      const newPath = parentPath ? `${parentPath}/${name}` : name;
-      const now = new Date().toISOString();
-      const newFile: ProjectFile = {
-        id,
-        projectId: '',
+  createFile: async (parentPath, name, type) => {
+    const { projectId, files, fileContent, expandedDirs } = get();
+    const id = generateId();
+    const newPath = parentPath ? `${parentPath}/${name}` : name;
+    const now = new Date().toISOString();
+    const newFile: ProjectFile = {
+      id,
+      projectId: projectId ?? '',
+      name,
+      path: newPath,
+      type,
+      lastModified: now,
+      ...(type === 'file' ? { language: getLanguageFromPath(name) } : {}),
+    };
+
+    // Apply optimistically, then persist; roll back if the gateway rejects it.
+    const newFiles = parentPath
+      ? addChildToDir(files, parentPath, newFile)
+      : [...files, newFile];
+
+    const newContent = type === 'file'
+      ? { ...fileContent, [id]: '' }
+      : fileContent;
+
+    // Auto-expand the parent directory
+    const newExpanded = new Set(expandedDirs);
+    if (parentPath) newExpanded.add(parentPath);
+
+    set({
+      files: newFiles,
+      fileContent: newContent,
+      expandedDirs: newExpanded,
+      error: null,
+    });
+
+    if (!projectId) return true;
+
+    try {
+      await projectsApi.createFile(projectId, {
         name,
         path: newPath,
         type,
-        lastModified: now,
-        ...(type === 'file' ? { language: getLanguageFromPath(name) } : {}),
-      };
-
-      const newFiles = parentPath
-        ? addChildToDir(state.files, parentPath, newFile)
-        : [...state.files, newFile];
-
-      const newContent = type === 'file'
-        ? { ...state.fileContent, [id]: '' }
-        : state.fileContent;
-
-      // Auto-expand the parent directory
-      const newExpanded = new Set(state.expandedDirs);
-      if (parentPath) newExpanded.add(parentPath);
-
-      return {
-        files: newFiles,
-        fileContent: newContent,
-        expandedDirs: newExpanded,
-      };
-    }),
-
-  deleteFile: (path) =>
-    set((state) => {
-      const file = findFileByPath(state.files, path);
-      if (!file) return state;
-
-      // Collect all paths to close tabs
-      const pathsToClose = file.type === 'directory' && file.children
-        ? [path, ...collectPaths(file.children)]
-        : [path];
-
-      // Close tabs for deleted files
-      const newTabs = state.openTabs.filter(
-        (t) => !pathsToClose.includes(t.path)
-      );
-
-      // Update active tab if it was closed
-      let newActiveTabId = state.activeTabId;
-      if (state.activeTabId) {
-        const activeTab = state.openTabs.find((t) => t.id === state.activeTabId);
-        if (activeTab && pathsToClose.includes(activeTab.path)) {
-          newActiveTabId =
-            newTabs[Math.max(0, newTabs.length - 1)]?.id ?? null;
-        }
-      }
-
-      // Remove from expanded dirs
-      const newExpanded = new Set(state.expandedDirs);
-      for (const p of pathsToClose) {
-        newExpanded.delete(p);
-      }
-
-      return {
-        files: removeFileByPath(state.files, path),
-        openTabs: newTabs,
-        activeTabId: newActiveTabId,
-        expandedDirs: newExpanded,
-      };
-    }),
-
-  renameFile: (path, newName) =>
-    set((state) => {
-      const file = findFileByPath(state.files, path);
-      if (!file) return state;
-
-      // Compute the parent path from the old path
-      const lastSlash = path.lastIndexOf('/');
-      const parentPath = lastSlash >= 0 ? path.substring(0, lastSlash) : '';
-      const newPath = parentPath ? `${parentPath}/${newName}` : newName;
-
-      // Recursively update paths for children
-      function updatePaths(f: ProjectFile, oldBase: string, newBase: string): ProjectFile {
-        const updatedPath = newBase + f.path.substring(oldBase.length);
-        return {
-          ...f,
-          name: f.path === path ? newName : f.name,
-          path: updatedPath,
-          ...(f.children
-            ? { children: f.children.map((c) => updatePaths(c, oldBase, newBase)) }
-            : {}),
-        };
-      }
-
-      const newFiles = updateFileInTree(state.files, path, (f) =>
-        updatePaths(f, path, newPath)
-      );
-
-      // Update open tabs paths
-      const newTabs = state.openTabs.map((t) => {
-        if (t.path === path) {
-          return { ...t, path: newPath, name: newName };
-        }
-        if (t.path.startsWith(path + '/')) {
-          return { ...t, path: newPath + t.path.substring(path.length) };
-        }
-        return t;
+        ...(type === 'file' ? { content: '' } : {}),
       });
+      return true;
+    } catch (error) {
+      set({
+        files,
+        fileContent,
+        expandedDirs,
+        error: getErrorMessage(error, '创建文件失败'),
+      });
+      return false;
+    }
+  },
 
-      // Update expanded dirs
-      const newExpanded = new Set<string>();
-      for (const p of state.expandedDirs) {
-        if (p === path) {
-          newExpanded.add(newPath);
-        } else if (p.startsWith(path + '/')) {
-          newExpanded.add(newPath + p.substring(path.length));
-        } else {
-          newExpanded.add(p);
-        }
+  deleteFile: async (path) => {
+    const { projectId, files, openTabs, activeTabId, expandedDirs } = get();
+    const file = findFileByPath(files, path);
+    if (!file) return false;
+
+    // Collect all paths to close tabs
+    const pathsToClose = file.type === 'directory' && file.children
+      ? [path, ...collectPaths(file.children)]
+      : [path];
+
+    // Close tabs for deleted files
+    const newTabs = openTabs.filter(
+      (t) => !pathsToClose.includes(t.path)
+    );
+
+    // Update active tab if it was closed
+    let newActiveTabId = activeTabId;
+    if (activeTabId) {
+      const activeTab = openTabs.find((t) => t.id === activeTabId);
+      if (activeTab && pathsToClose.includes(activeTab.path)) {
+        newActiveTabId =
+          newTabs[Math.max(0, newTabs.length - 1)]?.id ?? null;
       }
+    }
 
+    // Remove from expanded dirs
+    const newExpanded = new Set(expandedDirs);
+    for (const p of pathsToClose) {
+      newExpanded.delete(p);
+    }
+
+    set({
+      files: removeFileByPath(files, path),
+      openTabs: newTabs,
+      activeTabId: newActiveTabId,
+      expandedDirs: newExpanded,
+      error: null,
+    });
+
+    if (!projectId || !file.id) return true;
+
+    try {
+      await projectsApi.deleteFile(projectId, file.id);
+      return true;
+    } catch (error) {
+      set({
+        files,
+        openTabs,
+        activeTabId,
+        expandedDirs,
+        error: getErrorMessage(error, '删除文件失败'),
+      });
+      return false;
+    }
+  },
+
+  renameFile: async (path, newName) => {
+    const { projectId, files, openTabs, expandedDirs } = get();
+    const file = findFileByPath(files, path);
+    if (!file) return false;
+
+    // Compute the parent path from the old path
+    const lastSlash = path.lastIndexOf('/');
+    const parentPath = lastSlash >= 0 ? path.substring(0, lastSlash) : '';
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+
+    // Recursively update paths for children
+    function updatePaths(f: ProjectFile, oldBase: string, newBase: string): ProjectFile {
+      const updatedPath = newBase + f.path.substring(oldBase.length);
       return {
-        files: newFiles,
-        openTabs: newTabs,
-        expandedDirs: newExpanded,
+        ...f,
+        name: f.path === path ? newName : f.name,
+        path: updatedPath,
+        ...(f.children
+          ? { children: f.children.map((c) => updatePaths(c, oldBase, newBase)) }
+          : {}),
       };
-    }),
+    }
+
+    const newFiles = updateFileInTree(files, path, (f) =>
+      updatePaths(f, path, newPath)
+    );
+
+    // Update open tabs paths
+    const newTabs = openTabs.map((t) => {
+      if (t.path === path) {
+        return { ...t, path: newPath, name: newName };
+      }
+      if (t.path.startsWith(path + '/')) {
+        return { ...t, path: newPath + t.path.substring(path.length) };
+      }
+      return t;
+    });
+
+    // Update expanded dirs
+    const newExpanded = new Set<string>();
+    for (const p of expandedDirs) {
+      if (p === path) {
+        newExpanded.add(newPath);
+      } else if (p.startsWith(path + '/')) {
+        newExpanded.add(newPath + p.substring(path.length));
+      } else {
+        newExpanded.add(p);
+      }
+    }
+
+    set({
+      files: newFiles,
+      openTabs: newTabs,
+      expandedDirs: newExpanded,
+      error: null,
+    });
+
+    if (!projectId || !file.id) return true;
+
+    try {
+      await projectsApi.renameFile(projectId, file.id, {
+        name: newName,
+        path: newPath,
+      });
+      return true;
+    } catch (error) {
+      set({
+        files,
+        openTabs,
+        expandedDirs,
+        error: getErrorMessage(error, '重命名失败'),
+      });
+      return false;
+    }
+  },
 
   fetchFileTree: async (projectId) => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, projectId });
     try {
       const response = await projectsApi.files(projectId);
-      set({ files: response.data.data, isLoading: false });
+      set({ files: normalizeFiles(asArray<ProjectFile>(response.data.data)), isLoading: false });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取文件树失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取文件树失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -350,16 +447,19 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const response = await projectsApi.fileContent(projectId, fileId);
-      const content = response.data.data.content;
+      const payload = response.data.data as unknown as { content?: string } | null;
+      const content = payload?.content ?? '';
       set((state) => ({
         fileContent: { ...state.fileContent, [fileId]: content },
+        // Keep the server copy as the diff baseline; only saveFile updates it.
+        originalContent: { ...state.originalContent, [fileId]: content },
         isLoading: false,
       }));
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取文件内容失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取文件内容失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -374,13 +474,15 @@ export const useEditorStore = create<EditorState>()((set, get) => ({
         openTabs: state.openTabs.map((t) =>
           t.fileId === fileId ? { ...t, isDirty: false } : t
         ),
+        // The saved content becomes the new diff baseline.
+        originalContent: { ...state.originalContent, [fileId]: content },
         isLoading: false,
       }));
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '保存文件失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '保存文件失败'),
+        isLoading: false,
+      });
     }
   },
 

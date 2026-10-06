@@ -1,16 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readFile, stat } from 'fs/promises';
-import { join, resolve, extname, dirname } from 'path';
+import { readFile, realpath, stat } from 'fs/promises';
+import { extname, isAbsolute, join, relative, resolve } from 'path';
 
 const ALLOWED_EXTENSIONS = ['.md', '.markdown', '.mdx'];
 const PROJECT_ROOT = resolve(process.cwd(), '..');
+const AUTH_COOKIE_NAME = 'deepagent_authenticated';
 
+// Component-wise containment check — the equivalent of Python's Path.is_relative_to.
+// A raw `startsWith(PROJECT_ROOT)` prefix test also accepts a SIBLING directory
+// whose name merely begins with the project directory name (e.g. ".../zgy_project-evil").
 function isPathAllowed(filePath: string): boolean {
-  const resolved = resolve(filePath);
-  return resolved.startsWith(PROJECT_ROOT);
+  const rel = relative(PROJECT_ROOT, resolve(filePath));
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
 export async function GET(request: NextRequest) {
+  // /api/docs reads files out of the repository, so it is gated on the same cookie
+  // the dashboard middleware uses. That cookie is a client-written UX gate, not a
+  // security boundary (see stores/auth-store.ts) — real enforcement is the JWT
+  // check in api-gateway. The middleware also gates this path before we get here.
+  if (request.cookies.get(AUTH_COOKIE_NAME)?.value !== 'true') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const filePath = searchParams.get('path');
 
@@ -47,7 +59,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const content = await readFile(fullPath, 'utf-8');
+    // Re-check after resolving symlinks, so a link that lives inside the project
+    // cannot be used to read a file outside it.
+    const realFullPath = await realpath(fullPath);
+    if (!isPathAllowed(realFullPath)) {
+      return NextResponse.json(
+        { error: 'Access denied: file path is outside project directory.' },
+        { status: 403 }
+      );
+    }
+
+    const content = await readFile(realFullPath, 'utf-8');
 
     // Extract title from first heading
     let title = filePath.split('/').pop()?.replace(/\.[^.]+$/, '') || filePath;
@@ -60,7 +82,7 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      filename: fullPath.split(/[/\\]/).pop(),
+      filename: realFullPath.split(/[/\\]/).pop(),
       path: filePath,
       title,
       content,
@@ -81,8 +103,10 @@ export async function GET(request: NextRequest) {
         { status: 403 }
       );
     }
+    // Do not echo the raw error: it contains absolute server paths.
+    console.error('[api/docs] failed to read file', err);
     return NextResponse.json(
-      { error: `Error reading file: ${message}` },
+      { error: 'Error reading file.' },
       { status: 500 }
     );
   }

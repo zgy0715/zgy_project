@@ -48,8 +48,17 @@ apiClient.interceptors.response.use(
   async (error: AxiosError<ApiResponse<unknown>>) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
+    // Auth endpoints legitimately return 401 (bad credentials, expired refresh
+    // token). Never try to refresh on those - a failed /auth/login must surface
+    // its own error instead of kicking off a refresh round-trip.
+    const isAuthEndpoint = [
+      API_ENDPOINTS.AUTH.LOGIN,
+      API_ENDPOINTS.AUTH.REGISTER,
+      API_ENDPOINTS.AUTH.REFRESH,
+    ].some((path) => originalRequest?.url?.includes(path));
+
     // Attempt token refresh on 401
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
       if (!refreshToken) {
         localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
@@ -82,6 +91,10 @@ apiClient.interceptors.response.use(
 
         const newToken = data.data.accessToken;
         const newRefreshToken = data.data.refreshToken;
+
+        if (!newToken) {
+          throw new Error('刷新令牌响应缺少 accessToken');
+        }
 
         localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, newToken);
         if (newRefreshToken) {
@@ -138,6 +151,18 @@ export const authApi = {
 
   me: () =>
     apiClient.get<ApiResponse<import('@/types').AuthResponse>>(API_ENDPOINTS.AUTH.ME),
+
+  updateProfile: (data: { username?: string; email?: string; avatarUrl?: string }) =>
+    apiClient.put<ApiResponse<import('@/types').User>>(
+      API_ENDPOINTS.AUTH.PROFILE,
+      data
+    ),
+
+  changePassword: (data: { oldPassword: string; newPassword: string }) =>
+    apiClient.post<ApiResponse<void>>(
+      API_ENDPOINTS.AUTH.CHANGE_PASSWORD,
+      data
+    ),
 };
 
 // Projects API
@@ -164,18 +189,38 @@ export const projectsApi = {
     apiClient.get<ApiResponse<import('@/types').ProjectFile[]>>(API_ENDPOINTS.PROJECTS.FILES(id)),
 
   fileContent: (projectId: string, fileId: string) =>
-    apiClient.get<ApiResponse<{ content: string }>>(API_ENDPOINTS.PROJECTS.FILE_CONTENT(projectId, fileId)),
+    apiClient.get<ApiResponse<import('@/types').ProjectFile>>(API_ENDPOINTS.PROJECTS.FILE_CONTENT(projectId, fileId)),
+
+  createFile: (
+    projectId: string,
+    data: { name: string; path: string; type: 'file' | 'directory'; content?: string }
+  ) =>
+    apiClient.post<ApiResponse<import('@/types').ProjectFile>>(
+      API_ENDPOINTS.PROJECTS.FILES(projectId),
+      data
+    ),
 
   updateFile: (projectId: string, fileId: string, content: string) =>
-    apiClient.put<ApiResponse<void>>(API_ENDPOINTS.PROJECTS.FILE_CONTENT(projectId, fileId), { content }),
+    apiClient.put<ApiResponse<import('@/types').ProjectFile>>(API_ENDPOINTS.PROJECTS.FILE_CONTENT(projectId, fileId), { content }),
 
-  activity: (id: string) =>
-    apiClient.get<ApiResponse<import('@/types').ProjectActivity[]>>(API_ENDPOINTS.PROJECTS.ACTIVITY(id)),
+  renameFile: (projectId: string, fileId: string, data: { name: string; path: string }) =>
+    apiClient.put<ApiResponse<import('@/types').ProjectFile>>(API_ENDPOINTS.PROJECTS.FILE_CONTENT(projectId, fileId), data),
+
+  deleteFile: (projectId: string, fileId: string) =>
+    apiClient.delete<ApiResponse<void>>(API_ENDPOINTS.PROJECTS.FILE_CONTENT(projectId, fileId)),
+
+  activity: (id: string, params?: { limit?: number }) =>
+    apiClient.get<ApiResponse<import('@/types').ProjectActivity[]>>(
+      API_ENDPOINTS.PROJECTS.ACTIVITY(id),
+      { params }
+    ),
 };
 
 // Agents API
 export const agentsApi = {
-  list: (params?: { projectId?: string }) =>
+  // The gateway `GET /agents` only understands `agentType` / `statusFilter`;
+  // project scoping is applied client-side.
+  list: (params?: { agentType?: string; statusFilter?: string }) =>
     apiClient.get<ApiResponse<import('@/types').Agent[]>>(
       API_ENDPOINTS.AGENTS.LIST,
       { params }
@@ -192,14 +237,28 @@ export const agentsApi = {
       data
     ),
 
+  update: (
+    agentId: string,
+    data: {
+      name?: string;
+      description?: string;
+      agentType?: import('@/types').AgentType;
+      config?: unknown;
+    }
+  ) =>
+    apiClient.put<ApiResponse<import('@/types').Agent>>(
+      API_ENDPOINTS.AGENTS.DETAIL(agentId),
+      data
+    ),
+
   delete: (agentId: string) =>
     apiClient.delete<ApiResponse<void>>(
       API_ENDPOINTS.AGENTS.DETAIL(agentId)
     ),
 
-  execute: (agentId: string, data: { task: string; projectId?: string }) =>
-    apiClient.post<ApiResponse<{ taskId: string }>>(
-      API_ENDPOINTS.AGENTS.DETAIL(agentId),
+  execute: (agentId: string, data: { task: string; projectId?: string; stream?: boolean }) =>
+    apiClient.post<ApiResponse<{ taskId: string; status?: string; message?: string }>>(
+      API_ENDPOINTS.AGENTS.EXECUTE(agentId),
       data
     ),
 
@@ -239,7 +298,9 @@ export const agentsApi = {
 
 // Workflows API
 export const workflowsApi = {
-  list: (params?: { projectId?: string }) =>
+  // The gateway `GET /workflows` only understands `statusFilter`; project
+  // scoping is applied client-side.
+  list: (params?: { statusFilter?: string }) =>
     apiClient.get<ApiResponse<import('@/types').Workflow[]>>(
       API_ENDPOINTS.WORKFLOWS.LIST,
       { params }
@@ -261,9 +322,9 @@ export const workflowsApi = {
       API_ENDPOINTS.WORKFLOWS.DETAIL(id)
     ),
 
-  save: (id: string, data: { name?: string; description?: string; nodes: import('@/types').WorkflowNode[]; edges: import('@/types').WorkflowEdge[] }) =>
+  save: (id: string, data: { name?: string; description?: string; nodes?: import('@/types').WorkflowNode[]; edges?: import('@/types').WorkflowEdge[]; definition?: unknown; status?: string }) =>
     apiClient.put<ApiResponse<import('@/types').Workflow>>(
-      API_ENDPOINTS.WORKFLOWS.DETAIL(id),
+      API_ENDPOINTS.WORKFLOWS.UPDATE(id),
       data
     ),
 
@@ -276,6 +337,18 @@ export const workflowsApi = {
     apiClient.get<ApiResponse<import('@/types').WorkflowTemplate[]>>(
       API_ENDPOINTS.WORKFLOWS.TEMPLATES
     ),
+};
+
+// Tasks API (gateway SchedulerController, `/api/v1/tasks`)
+export const tasksApi = {
+  detail: (taskId: string) =>
+    apiClient.get<ApiResponse<unknown>>(API_ENDPOINTS.TASKS.DETAIL(taskId)),
+
+  update: (taskId: string, data: { status?: string }) =>
+    apiClient.put<ApiResponse<unknown>>(API_ENDPOINTS.TASKS.DETAIL(taskId), data),
+
+  delete: (taskId: string) =>
+    apiClient.delete<ApiResponse<void>>(API_ENDPOINTS.TASKS.DETAIL(taskId)),
 };
 
 // --- SSE streaming support ---
@@ -342,13 +415,15 @@ export async function streamAgentChat(
 
       buffer += decoder.decode(value, { stream: true });
 
-      // Parse SSE events from buffer
-      const lines = buffer.split('\n');
+      // Parse SSE events from buffer. The wire format may use \n or \r\n,
+      // so split on either and strip any trailing carriage return.
+      const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? ''; // Keep incomplete line in buffer
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const jsonStr = line.slice(6).trim();
+      for (const rawLine of lines) {
+        const line = rawLine.replace(/\r$/, '');
+        if (line.startsWith('data:')) {
+          const jsonStr = line.slice(5).trim();
           if (jsonStr === '[DONE]') {
             callbacks.onEnd?.(fullContent);
             return;

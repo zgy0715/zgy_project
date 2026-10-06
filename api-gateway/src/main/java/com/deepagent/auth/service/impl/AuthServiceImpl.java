@@ -1,13 +1,17 @@
 package com.deepagent.auth.service.impl;
 
 import com.deepagent.auth.dto.AuthResponse;
+import com.deepagent.auth.dto.ChangePasswordRequest;
 import com.deepagent.auth.dto.LoginRequest;
 import com.deepagent.auth.dto.RegisterRequest;
+import com.deepagent.auth.dto.UpdateProfileRequest;
+import com.deepagent.auth.dto.UserProfileResponse;
 import com.deepagent.auth.entity.User;
 import com.deepagent.auth.jwt.JwtTokenProvider;
 import com.deepagent.auth.repository.UserRepository;
 import com.deepagent.auth.service.AuthService;
 import com.deepagent.common.exception.BusinessException;
+import com.deepagent.common.exception.UnauthorizedException;
 import com.deepagent.common.util.ValidationUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -122,6 +126,99 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public User findByUsername(String username) {
         return userRepository.findByUsername(username).orElse(null);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public UserProfileResponse getProfile(Long userId) {
+        var user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException("User not found: " + userId));
+        return toProfileResponse(user);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>可选字段为空（null 或空白）时视为不修改；用户名/邮箱变更前会检查唯一性。</p>
+     */
+    @Override
+    @Transactional
+    public UserProfileResponse updateProfile(Long userId, UpdateProfileRequest request) {
+        var user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException("User not found: " + userId));
+
+        var newUsername = trimToNull(request.username());
+        if (newUsername != null && !newUsername.equals(user.getUsername())) {
+            ValidationUtil.validateUsername(newUsername);
+            if (userRepository.existsByUsername(newUsername)) {
+                throw new BusinessException("Username already taken: " + newUsername);
+            }
+            user.setUsername(newUsername);
+        }
+
+        var newEmail = trimToNull(request.email());
+        if (newEmail != null && !newEmail.equals(user.getEmail())) {
+            ValidationUtil.validateEmail(newEmail);
+            if (userRepository.existsByEmail(newEmail)) {
+                throw new BusinessException("Email already registered: " + newEmail);
+            }
+            user.setEmail(newEmail);
+        }
+
+        if (request.avatarUrl() != null) {
+            user.setAvatarUrl(trimToNull(request.avatarUrl()));
+        }
+
+        var saved = userRepository.save(user);
+        log.info("User profile updated: {}", saved.getUsername());
+        return toProfileResponse(saved);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>改密成功后清空 refresh token，使此前签发的刷新令牌立即失效。</p>
+     */
+    @Override
+    @Transactional
+    public void changePassword(Long userId, ChangePasswordRequest request) {
+        var user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException("User not found: " + userId));
+
+        if (!passwordEncoder.matches(request.oldPassword(), user.getPassword())) {
+            throw new UnauthorizedException("Current password is incorrect");
+        }
+
+        if (request.oldPassword().equals(request.newPassword())) {
+            throw new BusinessException("New password must be different from the current password");
+        }
+
+        user.setPassword(passwordEncoder.encode(request.newPassword()));
+        user.setRefreshToken(null);
+        userRepository.save(user);
+        log.info("Password changed for user: {}", user.getUsername());
+    }
+
+    private UserProfileResponse toProfileResponse(User user) {
+        return new UserProfileResponse(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail(),
+                user.getAvatarUrl(),
+                user.getRole(),
+                user.getCreatedAt()
+        );
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        var trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**

@@ -19,6 +19,9 @@ export default function Terminal({ projectId, className }: TerminalProps) {
   const commandHistoryRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
   const currentLineRef = useRef('');
+  // The xterm init effect runs once, so it must reach the latest command handler
+  // through a ref instead of capturing the first render's closure.
+  const executeCommandRef = useRef<(command: string) => void>(() => {});
 
   // Initialize xterm.js
   useEffect(() => {
@@ -61,7 +64,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
     xterm.open(terminalRef.current);
 
     // Delay fit to ensure DOM is ready
-    setTimeout(() => fitAddon.fit(), 100);
+    const fitTimer = setTimeout(() => fitAddon.fit(), 100);
 
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
@@ -71,7 +74,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
     xterm.writeln('\x1b[1;36m║     DeepAgent Terminal v0.1.0       ║\x1b[0m');
     xterm.writeln('\x1b[1;36m╚══════════════════════════════════════╝\x1b[0m');
     xterm.writeln('');
-    xterm.writeln('\x1b[33mType commands below. Use ↑/↓ for history.\x1b[0m');
+    xterm.writeln('\x1b[33mLocal shell only — remote command execution is not yet available.\x1b[0m');
     xterm.writeln('');
     xterm.write('\x1b[32m$\x1b[0m ');
 
@@ -84,7 +87,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
         case '\r': // Enter
           xterm.writeln('');
           if (currentLine.trim()) {
-            executeCommand(currentLine.trim());
+            executeCommandRef.current(currentLine.trim());
             commandHistoryRef.current = [...commandHistoryRef.current, currentLine.trim()];
             historyIndexRef.current = -1;
           }
@@ -184,6 +187,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
     window.addEventListener('resize', handleResize);
 
     return () => {
+      clearTimeout(fitTimer);
       window.removeEventListener('resize', handleResize);
       xterm.dispose();
       xtermRef.current = null;
@@ -191,21 +195,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
     };
   }, []);
 
-  const executeCommand = useCallback((command: string) => {
-    const xterm = xtermRef.current;
-    if (!xterm) return;
-
-    // Send command to backend via STOMP
-    if (projectId) {
-      stompClient.sendTerminalInput(projectId, command);
-      return;
-    }
-
-    // No project context: show local-only commands
-    handleLocalCommand(command, xterm);
-  }, [projectId]);
-
-  const handleLocalCommand = (command: string, xterm: XTerm) => {
+  const handleLocalCommand = useCallback((command: string, xterm: XTerm) => {
     const parts = command.split(' ');
     const cmd = parts[0];
 
@@ -218,7 +208,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
         xterm.writeln('  date        - Show current date');
         xterm.writeln('  whoami      - Show current user');
         xterm.writeln('');
-        xterm.writeln('\x1b[33mNote: Connect to a project for full terminal access.\x1b[0m');
+        xterm.writeln('\x1b[33mNote: these commands run in the browser. Remote execution is not supported yet.\x1b[0m');
         break;
       case 'clear':
         xterm.clear();
@@ -233,10 +223,33 @@ export default function Terminal({ projectId, className }: TerminalProps) {
         xterm.writeln('deepagent');
         break;
       default:
-        xterm.writeln(`\x1b[31m${cmd}: command not available (connect to a project for full terminal)\x1b[0m`);
+        xterm.writeln(`\x1b[31m${cmd}: command not available\x1b[0m`);
         xterm.writeln('Type \x1b[33mhelp\x1b[0m for available commands.');
     }
-  };
+  }, []);
+
+  const executeCommand = useCallback(
+    (command: string) => {
+      const xterm = xtermRef.current;
+      if (!xterm) return;
+
+      if (projectId) {
+        // The gateway declares no @MessageMapping for terminal input, so nothing
+        // consumes this frame and no output ever comes back. Report that plainly
+        // instead of leaving the user with silence, then run it locally.
+        xterm.writeln(
+          '\x1b[33m远程执行未开放：后端暂未提供终端命令通道，命令未发送到服务器。\x1b[0m'
+        );
+      }
+
+      handleLocalCommand(command, xterm);
+    },
+    [projectId, handleLocalCommand]
+  );
+
+  useEffect(() => {
+    executeCommandRef.current = executeCommand;
+  }, [executeCommand]);
 
   // Receive terminal output from STOMP
   useEffect(() => {
@@ -270,7 +283,7 @@ export default function Terminal({ projectId, className }: TerminalProps) {
         </div>
         <div className="flex items-center gap-2">
           <span className={`text-xs ${isConnected ? 'text-[#9ece6a]' : 'text-[#565f89]'}`}>
-            {isConnected ? '● Connected' : '○ Local'}
+            {isConnected ? '● 已连接（仅接收输出）' : '○ 本地模式'}
           </span>
           <button
             onClick={() => {

@@ -161,45 +161,108 @@ class TesterAgent(BaseAgent):
         )
 
         # Write test file if output path is specified
+        write_error: str | None = None
         if "file_write" in self.tool_map and "output_file" in context:
-            await self.use_tool(
+            write_result = await self.use_tool(
                 "file_write",
                 path=context["output_file"],
                 content=test_code,
             )
+            if not getattr(write_result, "success", True):
+                write_error = (
+                    getattr(write_result, "error", None)
+                    or "Unknown file_write error"
+                )
+                logger.warning(
+                    "TesterAgent '%s' could not write test file %s: %s",
+                    self.name,
+                    context["output_file"],
+                    write_error,
+                )
+                self.add_thinking_step(
+                    step="execute",
+                    thought="Failed to write generated tests to disk",
+                    observation=write_error[:200],
+                )
 
-        # Run generated tests if terminal tool is available and execution is requested
+        # Run generated tests if terminal tool is available and execution is
+        # requested. argv[0] must be an allow-listed binary from
+        # app/tools/terminal.py's ALLOWED_COMMANDS: "pytest" is allow-listed,
+        # while a bare interpreter ("python") deliberately is not — invoking
+        # "python -m pytest ..." would be rejected by the security policy.
+        test_run: dict[str, Any] | None = None
         if context.get("run_tests") and "terminal" in self.tool_map and "output_file" in context:
-            self.add_thinking_step(
-                step="execute",
-                thought="Running generated tests",
-                action=f"Executing: {context['output_file']}",
-            )
-            run_result = await self.use_tool(
-                "terminal",
-                command=f"python -m pytest {context['output_file']} -v",
-                timeout=60,
-            )
-            if run_result.success:
-                self.add_thinking_step(
-                    step="execute",
-                    thought="Tests executed successfully",
-                    observation=run_result.output[:200] if run_result.output else "",
-                )
+            if write_error is not None:
+                # Nothing new to execute — surface the write failure rather than
+                # reporting a passing run against a stale or missing file.
+                test_run = {
+                    "executed": False,
+                    "success": False,
+                    "command": None,
+                    "error": (
+                        "Tests not executed: failed to write test file "
+                        f"({write_error})"
+                    ),
+                }
             else:
+                command = f"pytest {context['output_file']} -v"
                 self.add_thinking_step(
                     step="execute",
-                    thought="Test execution failed",
-                    observation=run_result.error or "",
+                    thought="Running generated tests",
+                    action=f"Executing: {command}",
                 )
+                run_result = await self.use_tool(
+                    "terminal",
+                    command=command,
+                    timeout=60,
+                )
+                run_output = getattr(run_result, "output", None) or ""
+                run_error = getattr(run_result, "error", None)
 
-        self.artifacts.append({
+                if run_result.success:
+                    self.add_thinking_step(
+                        step="execute",
+                        thought="Tests executed successfully",
+                        observation=run_output[:200],
+                    )
+                else:
+                    # Either the command was rejected by the security policy or
+                    # the tests genuinely failed; record it so a failure is
+                    # never silently reported as success.
+                    failure_reason = run_error or run_output or "unknown error"
+                    logger.warning(
+                        "TesterAgent '%s' test run failed (%s): %s",
+                        self.name,
+                        command,
+                        failure_reason[:200],
+                    )
+                    self.add_thinking_step(
+                        step="execute",
+                        thought="Test execution failed",
+                        observation=failure_reason[:200],
+                    )
+
+                test_run = {
+                    "executed": True,
+                    "success": bool(run_result.success),
+                    "command": command,
+                    "error": run_error,
+                    "output_tail": run_output[-2000:] if run_output else "",
+                }
+
+        artifact: dict[str, Any] = {
             "type": "test_generation",
             "plan": plan,
             "status": "completed",
             "output_length": len(test_code),
             "framework": framework,
-        })
+        }
+        if write_error is not None:
+            artifact["file_write_error"] = write_error
+        if test_run is not None:
+            artifact["test_run"] = test_run
+            artifact["tests_passed"] = test_run["success"]
+        self.artifacts.append(artifact)
 
         return test_code
 

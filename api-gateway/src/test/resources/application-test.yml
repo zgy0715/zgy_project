@@ -1,0 +1,38 @@
+# Test profile configuration.
+#
+# Uses an in-memory H2 database and disables Flyway so the schema is created
+# from the JPA entities instead. No PostgreSQL/Redis/RabbitMQ instance is
+# required to boot the Spring context for tests.
+spring:
+  datasource:
+    url: jdbc:h2:mem:deepagent_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: false
+  flyway:
+    enabled: false
+  cache:
+    type: simple
+  rabbitmq:
+    host: localhost
+    port: 5672
+
+jwt:
+  secret: this-is-a-very-long-test-secret-key-for-integration-testing-only-min-256-bits
+  access-token-expiration: 3600000
+  refresh-token-expiration: 86400000
+
+rate-limit:
+  enabled: false
+
+agent-runtime:
+  url: http://localhost:8000
+  internal-api-key: test-internal-key

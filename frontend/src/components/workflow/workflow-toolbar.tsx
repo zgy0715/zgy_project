@@ -63,7 +63,7 @@ export function WorkflowToolbar({
               ? 'text-green-400 hover:text-green-300'
               : 'text-amber-400 hover:text-amber-300'
           )}
-          title={isPaused ? '继续工作流' : '暂停工作流'}
+          title={isPaused ? '恢复界面（后端执行不会暂停）' : '暂停界面（后端执行不会暂停）'}
         >
           {isPaused ? (
             <Play className="w-4 h-4" />
@@ -155,7 +155,7 @@ export function WorkflowToolbar({
       {isExecuting && isPaused && (
         <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-surface-3">
           <span className="w-2 h-2 rounded-full bg-amber-500" />
-          <span className="text-xs text-amber-400">已暂停</span>
+          <span className="text-xs text-amber-400">界面已暂停（执行仍在继续）</span>
         </div>
       )}
 

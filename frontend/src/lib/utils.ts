@@ -57,6 +57,52 @@ export function isBrowser(): boolean {
   return typeof window !== 'undefined';
 }
 
+// Normalize an API list payload into an array.
+//
+// List endpoints are documented to return a real array in `data`, but older
+// gateway builds wrapped it (paged `content`, or a named collection such as
+// `agents` / `workflows`). Accept all of those shapes instead of assuming.
+const LIST_KEYS = [
+  'content',
+  'items',
+  'list',
+  'data',
+  'agents',
+  'workflows',
+  'files',
+  'activities',
+  'templates',
+  'messages',
+] as const;
+
+export function asArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of LIST_KEYS) {
+      if (Array.isArray(obj[key])) return obj[key] as T[];
+    }
+  }
+  return [];
+}
+
+// Extract a human-readable message from an unknown thrown value.
+// Handles axios errors without resorting to `any`.
+export function getErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === 'object' && error !== null) {
+    const maybeResponse = (error as { response?: { data?: { message?: unknown } } }).response;
+    const apiMessage = maybeResponse?.data?.message;
+    if (typeof apiMessage === 'string' && apiMessage.length > 0) {
+      return apiMessage;
+    }
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) {
+      return message;
+    }
+  }
+  return fallback;
+}
+
 // Get file language from extension
 export function getLanguageFromPath(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? '';

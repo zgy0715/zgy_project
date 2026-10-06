@@ -1,11 +1,36 @@
 """Git operations tool."""
 
 import logging
+from pathlib import Path
 from typing import Any
 
+from app.config import get_settings
 from app.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _is_path_allowed(path: str) -> bool:
+    """Check if a path is within allowed directories.
+
+    Fail-closed: if no directories are configured, all access is denied.
+
+    Args:
+        path: The path to check.
+
+    Returns:
+        True if the path is allowed, False otherwise.
+    """
+    allowed_dirs = get_settings().security.allowed_directories
+    if not allowed_dirs:
+        logger.warning("No allowed directories configured — denying path access")
+        return False
+
+    resolved = Path(path).resolve()
+    return any(
+        resolved.is_relative_to(Path(allowed).resolve())
+        for allowed in allowed_dirs
+    )
 
 
 class GitTool(BaseTool):
@@ -44,6 +69,12 @@ class GitTool(BaseTool):
         args = args or {}
 
         try:
+            # Validate the repository path before running any Git operation
+            self._resolved_repo_path()
+        except PermissionError as e:
+            return ToolResult(success=False, error=str(e))
+
+        try:
             if operation == "status":
                 return await self._status()
             elif operation == "diff":
@@ -66,10 +97,32 @@ class GitTool(BaseTool):
             logger.error("Git operation '%s' failed: %s", operation, str(e))
             return ToolResult(success=False, error=str(e))
 
+    def _resolved_repo_path(self) -> str:
+        """Resolve the repository path, validating it against the sandbox.
+
+        Fail-closed: raises when no allowed directories are configured or when
+        the resolved repository path falls outside all of them.
+
+        Returns:
+            The resolved repository path as a string.
+
+        Raises:
+            PermissionError: If the repository path is not allowed.
+        """
+        raw_path = self.repo_path if self.repo_path is not None else str(Path.cwd())
+        resolved = Path(raw_path).resolve()
+
+        if not _is_path_allowed(str(resolved)):
+            raise PermissionError(
+                f"Access denied: repository path '{resolved}' is outside allowed directories"
+            )
+
+        return str(resolved)
+
     def _get_repo(self) -> Any:
         """Get a GitPython Repo instance for the configured path."""
         import git
-        return git.Repo(self.repo_path or ".")
+        return git.Repo(self._resolved_repo_path())
 
     async def _status(self) -> ToolResult:
         """Get the repository status using GitPython.
@@ -121,6 +174,18 @@ class GitTool(BaseTool):
         Returns:
             ToolResult with the diff output.
         """
+        # Reject caller-supplied values that GitPython could treat as options
+        if not isinstance(target, str):
+            return ToolResult(
+                success=False,
+                error="Invalid argument: target must be a string",
+            )
+        if target.startswith("-"):
+            return ToolResult(
+                success=False,
+                error="Invalid argument: paths must not start with '-'",
+            )
+
         try:
             repo = self._get_repo()
             if target:
@@ -145,6 +210,13 @@ class GitTool(BaseTool):
         Returns:
             ToolResult with the log output.
         """
+        # GitPython passes max_count through to rev-list; only ints are safe
+        if isinstance(count, bool) or not isinstance(count, int):
+            return ToolResult(
+                success=False,
+                error="Invalid argument: count must be an integer",
+            )
+
         try:
             repo = self._get_repo()
             log_lines: list[str] = []
@@ -169,6 +241,38 @@ class GitTool(BaseTool):
         Returns:
             ToolResult indicating success.
         """
+        # Reject caller-supplied values that GitPython could treat as options,
+        # and keep every staged path inside the allowed directories.
+        if files is not None and not isinstance(files, list):
+            return ToolResult(
+                success=False,
+                error="Invalid argument: files must be a list of strings",
+            )
+        for file_path in files or []:
+            if not isinstance(file_path, str):
+                return ToolResult(
+                    success=False,
+                    error="Invalid argument: files must be a list of strings",
+                )
+            if not file_path.strip():
+                return ToolResult(
+                    success=False,
+                    error="Invalid argument: file paths must not be empty",
+                )
+            if file_path.startswith("-"):
+                return ToolResult(
+                    success=False,
+                    error="Invalid argument: paths must not start with '-'",
+                )
+            candidate = Path(file_path)
+            if not candidate.is_absolute():
+                candidate = Path(self._resolved_repo_path()) / candidate
+            if not _is_path_allowed(str(candidate)):
+                return ToolResult(
+                    success=False,
+                    error=f"Access denied: path '{file_path}' is outside allowed directories",
+                )
+
         try:
             repo = self._get_repo()
             if files:

@@ -1,7 +1,6 @@
 """Base memory class defining the interface for memory backends."""
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from app.models.schemas import Message
 

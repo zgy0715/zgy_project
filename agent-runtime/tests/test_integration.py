@@ -6,6 +6,8 @@ chat, and workflow orchestration.
 
 import json
 import os
+import uuid
+from contextlib import nullcontext
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,8 +17,12 @@ from httpx import ASGITransport, AsyncClient
 from app.main import create_app
 from app.models.enums import AgentType, TaskStatus, WorkflowStatus
 
-# Check if LLM API key is available for live tests
-HAS_LLM_KEY = bool(os.environ.get("LLM_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+# Live LLM tests are opt-in: CI exports a dummy LLM_OPENAI_API_KEY, so merely
+# having the variable set must not enable tests that call a real provider.
+_LIVE_LLM_KEY = os.environ.get("LLM_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+HAS_LLM_KEY = bool(_LIVE_LLM_KEY) and os.environ.get(
+    "RUN_LIVE_LLM_TESTS", ""
+).lower() in {"1", "true", "yes"}
 
 
 @pytest.fixture(scope="module")
@@ -26,9 +32,14 @@ def app():
 
 
 @pytest.fixture(scope="module")
-def client(app):
-    """Create a synchronous test client for the FastAPI app."""
-    return TestClient(app)
+def client(app, auth_headers):
+    """Create a synchronous test client for the FastAPI app.
+
+    Requests are authenticated like the API gateway does, because the auth
+    middleware fails closed when no internal key is sent.
+    """
+    return TestClient(app, headers=auth_headers)
+
 
 
 @pytest.fixture(scope="module")
@@ -121,7 +132,9 @@ class TestAgentCRUD:
         response = client.post("/api/v1/agents/", json=sample_agent_payload)
         assert response.status_code == 201
         data = response.json()
-        assert data["id"] == sample_agent_payload["name"]
+        # The API exposes a real UUID id while the registry keys agents by name.
+        assert isinstance(data["id"], str) and data["id"]
+        assert data["id"] != sample_agent_payload["name"]
         assert data["agent_type"] == "coder"
         assert data["name"] == sample_agent_payload["name"]
         assert data["status"] == "pending"
@@ -181,19 +194,35 @@ class TestAgentCRUD:
 
     def test_list_agents_filter_by_type(self, client):
         """GET /api/v1/agents/?agent_type=coder filters by agent type."""
+        # Seed a coder and a reviewer so the filter has something to exclude.
+        for name, agent_type in (("filter-coder", "coder"), ("filter-reviewer", "reviewer")):
+            created = client.post(
+                "/api/v1/agents/",
+                json={"name": name, "agent_type": agent_type, "description": "filter test"},
+            )
+            assert created.status_code == 201
+
         response = client.get("/api/v1/agents/?agent_type=coder")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
+        assert any(agent["name"] == "filter-coder" for agent in data)
         for agent in data:
             assert agent["agent_type"] == "coder"
 
     def test_list_agents_filter_by_status(self, client):
         """GET /api/v1/agents/?status_filter=pending filters by status."""
+        created = client.post(
+            "/api/v1/agents/",
+            json={"name": "filter-pending", "agent_type": "coder", "description": "status test"},
+        )
+        assert created.status_code == 201
+
         response = client.get("/api/v1/agents/?status_filter=pending")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
+        assert any(agent["name"] == "filter-pending" for agent in data)
         for agent in data:
             assert agent["status"] == "pending"
 
@@ -207,7 +236,9 @@ class TestAgentCRUD:
         response = client.get(f"/api/v1/agents/{agent_id}")
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == agent_id
+        # Lookup by name is supported, but the payload carries the canonical UUID.
+        assert data["id"] == create_resp.json()["id"]
+        assert data["name"] == agent_id
         assert data["agent_type"] == "coder"
         assert "messages" in data
         assert "artifacts" in data
@@ -389,11 +420,12 @@ class TestAgentChat:
             yield "from "
             yield "stream!"
 
-        with patch.object(
-            create_resp.app.state if hasattr(create_resp, "app") else None,
-            "nothing",
-            create=True,
-        ):
+        # NOTE: this block used to be wrapped in patch.object(None, "nothing",
+        # create=True), which raised AttributeError while *entering* the context
+        # manager (you cannot set an attribute on None), so the SSE assertion
+        # never ran. The LLM stream is already mocked below via
+        # mock_agent.llm.stream, so no patching wrapper is needed here.
+        with nullcontext():
             # Use the synchronous client for SSE - it reads the full response
             with client as c:
                 # We need to mock at the agent level
@@ -612,12 +644,17 @@ class TestWorkflowCRUD:
         assert isinstance(data, list)
         assert len(data) >= 1
 
-    def test_list_workflows_filter_by_status(self, client):
+    def test_list_workflows_filter_by_status(self, client, sample_workflow_payload):
         """GET /api/v1/workflows/?status_filter=created filters by status."""
+        # Seed a workflow so the filter is asserted against real data.
+        created = client.post("/api/v1/workflows/", json=sample_workflow_payload)
+        assert created.status_code == 201
+
         response = client.get("/api/v1/workflows/?status_filter=created")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
+        assert len(data) >= 1
         for wf in data:
             assert wf["status"] == "created"
 
@@ -923,3 +960,283 @@ class TestFullLifecycle:
         # Step 6: Verify deletion
         get_resp2 = client.get(f"/api/v1/workflows/{workflow_id}")
         assert get_resp2.status_code == 404
+
+
+# ============================================================
+# Update Endpoint Tests (gateway PUT parity)
+# ============================================================
+
+
+class TestAgentUpdateEndpoints:
+    """Verify PUT /agents/{agent_id} and PUT /agents/{agent_id}/config."""
+
+    @staticmethod
+    def _create_agent(client, sample_agent_payload, **overrides):
+        """Create an agent with a unique name.
+
+        The registry is a process-wide singleton keyed by agent name, so a fixed
+        name would collide with agents created by earlier tests.
+        """
+        payload = dict(sample_agent_payload)
+        payload["name"] = f"update-test-{uuid.uuid4().hex[:8]}"
+        payload.update(overrides)
+        resp = client.post("/api/v1/agents/", json=payload)
+        assert resp.status_code == 201, resp.text
+        return payload, resp.json()["id"]
+
+    def test_update_agent_metadata(self, client, sample_agent_payload):
+        """PUT /agents/{id} updates mutable metadata and returns the GET shape."""
+        payload, agent_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.put(
+            f"/api/v1/agents/{agent_id}",
+            json={"description": "Updated description"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Same shape as GET /agents/{id}: a Java caller does .block() on Mono<Map>.
+        assert data["id"] == agent_id
+        assert data["name"] == payload["name"]
+        assert data["agent_type"] == "coder"
+        for key in ("id", "name", "agent_type", "status", "messages", "metadata"):
+            assert key in data
+
+        # Omitted fields keep their previous value; the update is persisted.
+        assert data["metadata"]["description"] == "Updated description"
+        get_resp = client.get(f"/api/v1/agents/{agent_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["metadata"]["description"] == "Updated description"
+
+    def test_agent_response_exposes_flat_gateway_fields(self, client, sample_agent_payload):
+        """The Java toAgentResponse reads top-level description/config/timestamps."""
+        payload, agent_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.put(
+            f"/api/v1/agents/{agent_id}",
+            json={"description": "Flat field check"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["description"] == "Flat field check"
+        assert data["config"] == payload["config"]
+        assert data["created_at"]
+        assert data["updated_at"]
+
+        get_data = client.get(f"/api/v1/agents/{agent_id}").json()
+        assert get_data["description"] == "Flat field check"
+        assert get_data["config"] == payload["config"]
+
+    def test_update_agent_rename_keeps_id(self, client, sample_agent_payload):
+        """Renaming an agent preserves its UUID and re-keys the registry."""
+        payload, agent_id = self._create_agent(client, sample_agent_payload)
+        old_name = payload["name"]
+        new_name = f"renamed-{uuid.uuid4().hex[:8]}"
+
+        resp = client.put(f"/api/v1/agents/{agent_id}", json={"name": new_name})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == new_name
+        assert resp.json()["id"] == agent_id
+
+        # Reachable by UUID and by the new name; the old name is gone.
+        assert client.get(f"/api/v1/agents/{agent_id}").status_code == 200
+        assert client.get(f"/api/v1/agents/{new_name}").status_code == 200
+        assert client.get(f"/api/v1/agents/{old_name}").status_code == 404
+
+    def test_update_agent_type(self, client, sample_agent_payload):
+        """Changing agent_type replaces the instance but keeps the UUID."""
+        _, agent_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.put(f"/api/v1/agents/{agent_id}", json={"agent_type": "reviewer"})
+        assert resp.status_code == 200
+        assert resp.json()["agent_type"] == "reviewer"
+        assert resp.json()["id"] == agent_id
+
+    def test_update_agent_duplicate_name_conflict(self, client, sample_agent_payload):
+        """A rename colliding with another agent returns 409, not 500."""
+        first_payload, _ = self._create_agent(client, sample_agent_payload)
+        _, second_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.put(
+            f"/api/v1/agents/{second_id}",
+            json={"name": first_payload["name"]},
+        )
+        assert resp.status_code == 409
+
+    def test_update_agent_not_found(self, client):
+        """Unknown id returns 404 with the normal error envelope."""
+        resp = client.put("/api/v1/agents/does-not-exist", json={"description": "x"})
+        assert resp.status_code == 404
+        assert "detail" in resp.json()
+
+    def test_update_agent_config(self, client, sample_agent_payload):
+        """PUT /agents/{id}/config replaces just the config mapping."""
+        payload, agent_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.put(
+            f"/api/v1/agents/{agent_id}/config",
+            json={"config": {"temperature": 0.9, "max_tokens": 2048}},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"temperature": 0.9, "max_tokens": 2048}
+
+        # Other metadata is untouched.
+        state = client.get(f"/api/v1/agents/{agent_id}").json()
+        assert state["name"] == payload["name"]
+
+    def test_update_agent_config_raw_body_shape(self, client, sample_agent_payload):
+        """The Java gateway forwards the config body verbatim, without a wrapper."""
+        _, agent_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.put(f"/api/v1/agents/{agent_id}/config", json={"temperature": 0.25})
+
+        assert resp.status_code == 200
+        assert resp.json() == {"temperature": 0.25}
+
+    def test_update_agent_config_replaces_previous(self, client, sample_agent_payload):
+        """The config mapping is replaced, not merged."""
+        _, agent_id = self._create_agent(client, sample_agent_payload)
+
+        client.put(f"/api/v1/agents/{agent_id}/config", json={"config": {"a": 1}})
+        resp = client.put(f"/api/v1/agents/{agent_id}/config", json={"config": {"b": 2}})
+        assert resp.status_code == 200
+        assert resp.json() == {"b": 2}
+
+    def test_get_agent_config(self, client, sample_agent_payload):
+        """GET /agents/{id}/config returns the mapping the gateway reads back."""
+        payload, agent_id = self._create_agent(client, sample_agent_payload)
+
+        resp = client.get(f"/api/v1/agents/{agent_id}/config")
+
+        assert resp.status_code == 200
+        assert resp.json() == payload["config"]
+
+    def test_get_agent_config_by_name(self, client, sample_agent_payload):
+        """The config route accepts an agent name as well as a UUID."""
+        payload, _ = self._create_agent(client, sample_agent_payload)
+
+        resp = client.get(f"/api/v1/agents/{payload['name']}/config")
+
+        assert resp.status_code == 200
+        assert resp.json() == payload["config"]
+
+    def test_get_agent_config_not_found(self, client):
+        resp = client.get("/api/v1/agents/does-not-exist/config")
+        assert resp.status_code == 404
+        assert "detail" in resp.json()
+
+    def test_update_agent_config_not_found(self, client):
+        resp = client.put("/api/v1/agents/does-not-exist/config", json={"config": {}})
+        assert resp.status_code == 404
+        assert "detail" in resp.json()
+
+
+class TestWorkflowUpdateEndpoint:
+    """Verify PUT /workflows/{workflow_id}."""
+
+    def test_update_workflow_metadata(self, client, sample_workflow_payload):
+        """PUT /workflows/{id} updates fields and returns the GET shape."""
+        create_resp = client.post("/api/v1/workflows/", json=sample_workflow_payload)
+        assert create_resp.status_code == 201
+        workflow_id = create_resp.json()["id"]
+
+        resp = client.put(
+            f"/api/v1/workflows/{workflow_id}",
+            json={"name": "renamed-workflow", "description": "Updated"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == workflow_id
+        assert data["name"] == "renamed-workflow"
+        assert data["description"] == "Updated"
+        # Nodes/edges are preserved when not supplied.
+        assert [n["id"] for n in data["nodes"]] == ["coder-node", "reviewer-node"]
+
+        get_resp = client.get(f"/api/v1/workflows/{workflow_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["name"] == "renamed-workflow"
+
+    def test_update_workflow_nodes_replaced(self, client, sample_workflow_payload):
+        """Supplying nodes/edges replaces the previous definition."""
+        create_resp = client.post("/api/v1/workflows/", json=sample_workflow_payload)
+        workflow_id = create_resp.json()["id"]
+
+        resp = client.put(
+            f"/api/v1/workflows/{workflow_id}",
+            json={
+                "nodes": [{"id": "solo", "agent_type": "tester", "name": "Solo"}],
+                "edges": [],
+            },
+        )
+        assert resp.status_code == 200
+        assert [n["id"] for n in resp.json()["nodes"]] == ["solo"]
+        assert resp.json()["edges"] == []
+
+    def test_update_workflow_not_found(self, client):
+        resp = client.put("/api/v1/workflows/does-not-exist", json={"name": "x"})
+        assert resp.status_code == 404
+        assert "detail" in resp.json()
+
+    def test_update_workflow_empty_nodes_rejected(self, client, sample_workflow_payload):
+        """An empty node list is rejected by the request model (422)."""
+        create_resp = client.post("/api/v1/workflows/", json=sample_workflow_payload)
+        workflow_id = create_resp.json()["id"]
+
+        resp = client.put(f"/api/v1/workflows/{workflow_id}", json={"nodes": []})
+        assert resp.status_code == 422
+
+
+class TestFrontendCamelCaseCompatibility:
+    """The frontend posts camelCase bodies and the gateway forwards them verbatim."""
+
+    def test_create_agent_accepts_camel_case(self, client):
+        """POST /api/v1/agents/ accepts the frontend's agentType key."""
+        resp = client.post(
+            "/api/v1/agents/",
+            json={
+                "name": f"camel-agent-{uuid.uuid4().hex[:8]}",
+                "agentType": "coder",
+                "description": "created with camelCase keys",
+                "config": {"temperature": 0.3},
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["agent_type"] == "coder"
+        assert data["description"] == "created with camelCase keys"
+
+    def test_create_workflow_accepts_camel_case_nodes(self, client):
+        """POST /api/v1/workflows/ accepts camelCase node payloads."""
+        resp = client.post(
+            "/api/v1/workflows/",
+            json={
+                "name": f"camel-workflow-{uuid.uuid4().hex[:8]}",
+                "description": "camelCase nodes",
+                "projectId": "proj-1",
+                "nodes": [{"id": "camel-1", "agentType": "coder", "name": "Coder"}],
+                "edges": [],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        node = resp.json()["nodes"][0]
+        assert node["id"] == "camel-1"
+        # Node maps are passed through the gateway unchanged, so the frontend
+        # (frontend/src/types/workflow.ts) reads the camelCase key.
+        assert node["agentType"] == "coder"
+
+    def test_update_workflow_accepts_definition_key(self, client, sample_workflow_payload):
+        """PUT /api/v1/workflows/{id} accepts the gateway's definition key."""
+        create_resp = client.post("/api/v1/workflows/", json=sample_workflow_payload)
+        workflow_id = create_resp.json()["id"]
+
+        resp = client.put(
+            f"/api/v1/workflows/{workflow_id}",
+            json={
+                "definition": [
+                    {"id": "gateway-node", "agentType": "tester", "name": "Tester"}
+                ]
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert [n["id"] for n in resp.json()["nodes"]] == ["gateway-node"]

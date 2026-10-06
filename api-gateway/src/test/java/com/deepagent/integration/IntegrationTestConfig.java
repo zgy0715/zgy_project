@@ -1,7 +1,5 @@
 package com.deepagent.integration;
 
-import com.deepagent.auth.jwt.JwtTokenProvider;
-import com.deepagent.common.exception.BusinessException;
 import com.deepagent.orchestrator.client.AgentRestClient;
 import okhttp3.mockwebserver.MockWebServer;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -60,7 +58,7 @@ public class IntegrationTestConfig {
     @Primary
     public AgentRestClient agentRestClient(MockWebServer mockWebServer) {
         String baseUrl = String.format("http://localhost:%d", mockWebServer.getPort());
-        return new AgentRestClient(baseUrl);
+        return new AgentRestClient(baseUrl, "test-internal-key");
     }
 
     /**

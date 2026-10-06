@@ -1,9 +1,9 @@
 // Agent state management with Zustand
 
 import { create } from 'zustand';
-import type { Agent, ChatMessage, ThinkingChain, AgentConversation } from '@/types';
-import { agentsApi, streamAgentChat } from '@/lib/api-client';
-import { generateId } from '@/lib/utils';
+import type { Agent, AgentType, ChatMessage, ThinkingChain, AgentConversation } from '@/types';
+import { agentsApi, tasksApi, streamAgentChat } from '@/lib/api-client';
+import { generateId, asArray, getErrorMessage } from '@/lib/utils';
 
 interface AgentState {
   agents: Agent[];
@@ -13,6 +13,8 @@ interface AgentState {
   messages: ChatMessage[];
   thinkingChains: ThinkingChain[];
   isStreaming: boolean;
+  /** Id of the assistant placeholder currently being streamed into. */
+  streamingMessageId: string | null;
   isLoading: boolean;
   error: string | null;
 
@@ -23,9 +25,12 @@ interface AgentState {
   removeAgent: (id: string) => void;
   setCurrentAgent: (agent: Agent | null) => void;
   selectAgent: (id: string) => void;
-  fetchAgents: (projectId: string) => Promise<void>;
-  createAgent: (data: Partial<Agent>) => Promise<void>;
-  deleteAgent: (id: string) => Promise<void>;
+  fetchAgents: (projectId?: string) => Promise<void>;
+  createAgent: (data: Partial<Agent>) => Promise<boolean>;
+  saveAgent: (id: string, data: { name?: string; description?: string; agentType?: AgentType; config?: unknown }) => Promise<boolean>;
+  startAgent: (id: string, projectId: string, task: string) => Promise<string | null>;
+  cancelTask: (taskId: string) => Promise<boolean>;
+  deleteAgent: (id: string) => Promise<boolean>;
   setConversations: (conversations: AgentConversation[]) => void;
   setCurrentConversation: (conversation: AgentConversation | null) => void;
   setMessages: (messages: ChatMessage[]) => void;
@@ -50,6 +55,7 @@ const initialState = {
   messages: [],
   thinkingChains: [],
   isStreaming: false,
+  streamingMessageId: null,
   isLoading: false,
   error: null,
 };
@@ -86,25 +92,36 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     const agent = get().agents.find((a) => a.id === id);
     if (!agent) return;
 
-    set({ currentAgent: agent, messages: [], currentConversation: null });
+    set({
+      currentAgent: agent,
+      messages: [],
+      currentConversation: null,
+      streamingMessageId: null,
+    });
     get().fetchMessages(id);
   },
 
   fetchAgents: async (projectId) => {
     set({ isLoading: true, error: null });
     try {
-      const response = await agentsApi.list(projectId ? { projectId } : undefined);
-      const agents = response.data.data;
+      // The gateway list endpoint has no project filter; scope client-side.
+      const response = await agentsApi.list();
+      const allAgents = asArray<Agent>(response.data.data);
+      const agents = projectId
+        ? allAgents.filter(
+            (a) => !a.projectId || String(a.projectId) === String(projectId)
+          )
+        : allAgents;
       set({
         agents,
         currentAgent: agents[0] ?? null,
         isLoading: false,
       });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取智能体列表失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取智能体列表失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -117,11 +134,62 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         agents: [...state.agents, newAgent],
         isLoading: false,
       }));
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '创建智能体失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '创建智能体失败'),
+        isLoading: false,
+      });
+      return false;
+    }
+  },
+
+  saveAgent: async (id, data) => {
+    set({ error: null });
+    try {
+      const response = await agentsApi.update(id, data);
+      const updated = response.data.data;
+      get().updateAgent(id, {
+        ...(updated ?? {}),
+        // Fall back to the submitted fields if the gateway echoes nothing back.
+        // `config` is deliberately excluded: it is not part of the Agent shape.
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.description !== undefined ? { description: data.description } : {}),
+        ...(data.agentType !== undefined ? { agentType: data.agentType } : {}),
+      });
+      return true;
+    } catch (error) {
+      set({ error: getErrorMessage(error, '更新智能体失败') });
+      return false;
+    }
+  },
+
+  startAgent: async (id, projectId, task) => {
+    set({ error: null });
+    try {
+      const response = await agentsApi.execute(id, {
+        task,
+        projectId,
+        stream: true,
+      });
+      const data = response.data.data as { taskId?: string | number } | null;
+      return data?.taskId !== undefined && data?.taskId !== null
+        ? String(data.taskId)
+        : null;
+    } catch (error) {
+      set({ error: getErrorMessage(error, '启动智能体失败') });
+      return null;
+    }
+  },
+
+  cancelTask: async (taskId) => {
+    set({ error: null });
+    try {
+      await tasksApi.update(taskId, { status: 'CANCELLED' });
+      return true;
+    } catch (error) {
+      set({ error: getErrorMessage(error, '停止任务失败') });
+      return false;
     }
   },
 
@@ -131,11 +199,13 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
       await agentsApi.delete(id);
       get().removeAgent(id);
       set({ isLoading: false });
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '删除智能体失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '删除智能体失败'),
+        isLoading: false,
+      });
+      return false;
     }
   },
 
@@ -151,10 +221,15 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   updateLastMessage: (content) =>
     set((state) => {
       const messages = [...state.messages];
-      if (messages.length > 0) {
-        const last = messages[messages.length - 1];
-        messages[messages.length - 1] = { ...last, content };
-      }
+      if (messages.length === 0) return { messages };
+      // Target the placeholder created by sendMessage so that a second send
+      // does not overwrite an unrelated bubble.
+      const targetId = state.streamingMessageId;
+      const index = targetId
+        ? messages.findIndex((m) => m.id === targetId)
+        : messages.length - 1;
+      const safeIndex = index >= 0 ? index : messages.length - 1;
+      messages[safeIndex] = { ...messages[safeIndex], content };
       return { messages };
     }),
 
@@ -164,35 +239,38 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
   fetchThinkingChain: async (agentId) => {
     try {
       const response = await agentsApi.thinkingChain(agentId);
-      set({ thinkingChains: response.data.data });
+      set({ thinkingChains: asArray<ThinkingChain>(response.data.data) });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取思维链失败';
-      set({ error: message });
+      set({ error: getErrorMessage(error, '获取思维链失败') });
     }
   },
 
-  fetchMessages: async (agentId, conversationId) => {
+  fetchMessages: async (agentId) => {
     set({ isLoading: true, error: null });
     try {
-      const response = await agentsApi.messages(agentId, {
-        conversationId,
+      // The gateway only accepts `limit` / `offset`; a conversationId would be
+      // silently ignored, so it is not sent.
+      const response = await agentsApi.messages(agentId);
+      set({
+        messages: asArray<ChatMessage>(response.data.data),
+        isLoading: false,
       });
-      set({ messages: response.data.data, isLoading: false });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取消息记录失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取消息记录失败'),
+        isLoading: false,
+      });
     }
   },
 
   setStreaming: (isStreaming) => set({ isStreaming }),
 
   sendMessage: (content) => {
-    const { currentAgent, currentConversation } = get();
+    const { currentAgent, currentConversation, isStreaming } = get();
     if (!currentAgent) return;
+    // Ignore a second send while a response is still streaming - the stream
+    // callbacks write into a single placeholder.
+    if (isStreaming) return;
 
     // Add user message
     const userMessage: ChatMessage = {
@@ -216,6 +294,7 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
     set((state) => ({
       messages: [...state.messages, userMessage, assistantMessage],
       isStreaming: true,
+      streamingMessageId: assistantMessageId,
     }));
 
     // Set agent to planning status
@@ -238,19 +317,26 @@ export const useAgentStore = create<AgentState>()((set, get) => ({
         onEnd: (fullContent) => {
           get().updateLastMessage(fullContent);
           get().updateAgent(currentAgent.id, { status: 'completed' });
-          set({ isStreaming: false });
+          set({ isStreaming: false, streamingMessageId: null });
         },
         onError: (errorMsg) => {
           get().updateLastMessage(`错误: ${errorMsg}`);
           get().updateAgent(currentAgent.id, { status: 'failed' });
-          set({ isStreaming: false, error: errorMsg });
+          set({
+            isStreaming: false,
+            streamingMessageId: null,
+            error: errorMsg,
+          });
         },
       }
-    ).catch((err) => {
-      const message = (err as Error).message ?? '发送消息失败';
-      get().updateLastMessage(`错误: ${message}`);
+    ).catch((err: unknown) => {
+      get().updateLastMessage(`错误: ${getErrorMessage(err, '发送消息失败')}`);
       get().updateAgent(currentAgent.id, { status: 'failed' });
-      set({ isStreaming: false, error: message });
+      set({
+        isStreaming: false,
+        streamingMessageId: null,
+        error: getErrorMessage(err, '发送消息失败'),
+      });
     });
   },
 

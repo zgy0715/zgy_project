@@ -6,6 +6,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import { Spinner } from '@/components/ui/spinner';
 import { useProjectStore } from '@/stores/project-store';
 import { projectsApi } from '@/lib/api-client';
+import type { ProjectFile } from '@/types';
 
 interface DocFile {
   filename: string;
@@ -23,7 +24,7 @@ interface DocContent {
 }
 
 // Recursively filter for document files (.md, .txt)
-function filterDocFiles(files: any[], basePath = ''): DocFile[] {
+function filterDocFiles(files: ProjectFile[], basePath = ''): DocFile[] {
   const result: DocFile[] = [];
   for (const file of files) {
     const fullPath = basePath ? `${basePath}/${file.name}` : file.name;
@@ -43,8 +44,8 @@ function filterDocFiles(files: any[], basePath = ''): DocFile[] {
 }
 
 // Flatten nested file tree into a flat array
-function flattenFiles(files: any[]): any[] {
-  const result: any[] = [];
+function flattenFiles(files: ProjectFile[]): ProjectFile[] {
+  const result: ProjectFile[] = [];
   for (const file of files) {
     result.push(file);
     if (file.children) {
@@ -102,14 +103,14 @@ export default function DocsPage() {
     try {
       const response = await projectsApi.files(selectedProjectId);
       const allFiles = flattenFiles(response.data.data);
-      const file = allFiles.find((f: any) => f.path === filePath);
+      const file = allFiles.find((f) => f.path === filePath);
       if (file) {
         const contentResponse = await projectsApi.fileContent(selectedProjectId, file.id);
         setSelectedFile({
           filename: file.name,
           path: file.path,
           title: file.name.replace(/\.(md|txt)$/, ''),
-          content: contentResponse.data.data.content,
+          content: contentResponse.data.data.content ?? '',
           size_bytes: file.size ?? 0,
         });
       } else {

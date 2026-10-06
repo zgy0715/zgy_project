@@ -1,4 +1,4 @@
-﻿"""Coder Agent implementation - responsible for code generation."""
+"""Coder Agent implementation - responsible for code generation."""
 
 import logging
 from typing import Any
@@ -131,20 +131,23 @@ class CoderAgent(BaseAgent):
 
         # Build multi-file context
         files_section = self._build_files_section(context)
+        # Build the context section once and reuse it below (previously the bare
+        # name `context_section` was referenced without ever being bound here).
+        context_section = self._build_context_section(context)
 
         # Choose template based on modification vs. new code
         if existing_code:
             task_prompt = PromptTemplates.render(
                 "code_modification",
                 task=plan,
-                context=self._build_context_section(context),
+                context=context_section,
                 existing_code=existing_code,
             )
         else:
             task_prompt = PromptTemplates.render(
                 "code_generation",
                 task=plan,
-                context=self._build_context_section(context),
+                context=context_section,
             )
 
         # Build the code generation request with multi-file support

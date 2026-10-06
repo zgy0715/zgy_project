@@ -272,8 +272,9 @@ class ReviewerAgent(BaseAgent):
         """Parse LLM review output into a structured ReviewResult.
 
         Attempts to extract a JSON block from the review text and
-        parse it into ReviewFinding objects. Falls back to a simple
-        result with the raw text as summary if parsing fails.
+        parse it into ReviewFinding objects. Falls back to a conservative
+        result (not approved) with the raw text as summary if parsing fails,
+        because an unparseable review is not evidence that the code is correct.
 
         Args:
             review_text: The raw LLM review output.
@@ -301,7 +302,8 @@ class ReviewerAgent(BaseAgent):
                 return ReviewResult(
                     findings=findings,
                     summary=data.get("summary", ""),
-                    approved=data.get("approved", True),
+                    # Fail closed: only an explicit approval counts.
+                    approved=bool(data.get("approved", False)),
                 )
             except (json.JSONDecodeError, AttributeError):
                 pass
@@ -310,5 +312,5 @@ class ReviewerAgent(BaseAgent):
         return ReviewResult(
             findings=[],
             summary=review_text[:500],
-            approved=True,
+            approved=False,
         )

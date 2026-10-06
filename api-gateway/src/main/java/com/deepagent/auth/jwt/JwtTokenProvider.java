@@ -1,4 +1,4 @@
-﻿﻿﻿﻿package com.deepagent.auth.jwt;
+package com.deepagent.auth.jwt;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -29,22 +29,32 @@ public class JwtTokenProvider {
     // Minimum key length for HMAC-SHA256 in bytes (256-bit)
     private static final int MIN_SECRET_LENGTH = 32;
 
-    private SecretKey signingKey;
+    private final String secret;
     private final long accessTokenExpirationMs;
     private final long refreshTokenExpirationMs;
 
-    @Value("")
-    private String secret;
+    private SecretKey signingKey;
 
     public JwtTokenProvider(
-            @Value("") long accessTokenExpirationMs,
-            @Value("") long refreshTokenExpirationMs) {
+            @Value("${jwt.secret:}") String secret,
+            @Value("${jwt.access-token-expiration:3600000}") long accessTokenExpirationMs,
+            @Value("${jwt.refresh-token-expiration:86400000}") long refreshTokenExpirationMs) {
+        this.secret = secret;
         this.accessTokenExpirationMs = accessTokenExpirationMs;
         this.refreshTokenExpirationMs = refreshTokenExpirationMs;
+        // 在构造阶段即完成密钥校验，保证直接 new 出来的实例（测试/工具）也可用
+        this.signingKey = createSigningKey(secret);
     }
 
     @PostConstruct
     public void init() {
+        this.signingKey = createSigningKey(secret);
+    }
+
+    /**
+     * Validates the configured secret and derives the HMAC-SHA256 signing key.
+     */
+    private SecretKey createSigningKey(String secret) {
         if (secret == null || secret.isBlank()) {
             throw new IllegalStateException("JWT_SECRET environment variable must be set");
         }
@@ -61,7 +71,7 @@ public class JwtTokenProvider {
             log.warn("JWT secret appears to be a development/default value. " +
                      "Generate a strong random secret for production use.");
         }
-        signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 
     public String generateAccessToken(String username, String role) {

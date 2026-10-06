@@ -2,7 +2,6 @@ package com.deepagent.scheduler.service;
 
 import com.deepagent.common.exception.BusinessException;
 import com.deepagent.scheduler.entity.Task;
-import com.deepagent.scheduler.repository.TaskRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -18,6 +17,11 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -33,7 +37,7 @@ class DagSchedulerTest {
     private DagParser dagParser;
 
     @Mock
-    private TaskRepository taskRepository;
+    private TaskService taskService;
 
     @Mock
     private com.deepagent.orchestrator.service.AgentOrchestrator agentOrchestrator;
@@ -121,20 +125,34 @@ class DagSchedulerTest {
         @Test
         @DisplayName("Should mark remaining tasks as skipped on failure")
         void shouldMarkRemainingAsSkipped() {
-            var pendingTask = Task.builder()
-                    .id(2L)
-                    .projectId(projectId)
-                    .name("pending-task")
-                    .status(Task.Status.PENDING)
-                    .dependencies("[1]")
-                    .build();
-
-            when(taskRepository.findByProjectIdAndStatus(projectId, Task.Status.PENDING))
-                    .thenReturn(List.of(pendingTask));
+            when(taskService.markPendingTasksAsSkipped(projectId)).thenReturn(1);
 
             dagScheduler.markRemainingTasksAsSkipped(projectId);
 
-            assertThat(pendingTask.getStatus()).isEqualTo(Task.Status.SKIPPED);
+            verify(taskService).markPendingTasksAsSkipped(projectId);
+        }
+
+        @Test
+        @DisplayName("Should retry a failing task and mark it FAILED when retries are exhausted")
+        void shouldRetryFailingTaskUntilExhausted() {
+            var task = Task.builder()
+                    .id(2L)
+                    .projectId(projectId)
+                    .name("flaky-task")
+                    .maxRetries(1)
+                    .build();
+
+            when(taskService.requireTask(2L)).thenReturn(task);
+            when(agentOrchestrator.executeAgentTask(any(), any(), any(), any()))
+                    .thenThrow(new BusinessException("agent-runtime unavailable"));
+
+            assertThatThrownBy(() -> dagScheduler.executeTask(2L))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessageContaining("Task 2 failed");
+
+            verify(taskService, times(2)).markRunning(2L);
+            verify(taskService).markRetry(2L, 1);
+            verify(taskService).markFailed(eq(2L), anyString());
         }
     }
 }

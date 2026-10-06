@@ -22,6 +22,9 @@ EXPECTED_ENDPOINTS = {
     "POST /api/v1/agents/": "createAgent",
     "GET /api/v1/agents/": "listAgents",
     "GET /api/v1/agents/{agent_id}": "getAgent",
+    "PUT /api/v1/agents/{agent_id}": "updateAgent",
+    "GET /api/v1/agents/{agent_id}/config": "getAgentConfig",
+    "PUT /api/v1/agents/{agent_id}/config": "updateAgentConfig",
     "POST /api/v1/agents/{agent_id}/execute": "executeAgent",
     "POST /api/v1/agents/{agent_id}/chat": "chatWithAgent",
     "POST /api/v1/agents/{agent_id}/chat/stream": "streamChat",
@@ -32,6 +35,7 @@ EXPECTED_ENDPOINTS = {
     "POST /api/v1/workflows/": "createWorkflow",
     "GET /api/v1/workflows/": "listWorkflows",
     "GET /api/v1/workflows/{workflow_id}": "getWorkflow",
+    "PUT /api/v1/workflows/{workflow_id}": "updateWorkflow",
     "POST /api/v1/workflows/{workflow_id}/execute": "executeWorkflow",
     "DELETE /api/v1/workflows/{workflow_id}": "deleteWorkflow",
 }

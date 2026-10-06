@@ -1,17 +1,24 @@
 package com.deepagent.auth.controller;
 
 import com.deepagent.auth.dto.AuthResponse;
+import com.deepagent.auth.dto.ChangePasswordRequest;
 import com.deepagent.auth.dto.LoginRequest;
 import com.deepagent.auth.dto.RegisterRequest;
+import com.deepagent.auth.dto.UpdateProfileRequest;
+import com.deepagent.auth.dto.UserProfileResponse;
 import com.deepagent.auth.jwt.JwtTokenProvider;
 import com.deepagent.auth.service.AuthService;
 import com.deepagent.common.response.ApiResponse;
+import com.deepagent.common.util.PrincipalUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,9 +29,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * REST controller for authentication endpoints.
  *
- * <p>Provides public endpoints for user registration, login, and token refresh.
- * All endpoints are prefixed with {@code /api/v1/auth} and do not require
- * prior authentication.</p>
+ * <p>Provides public endpoints for user registration, login, and token refresh,
+ * plus authenticated endpoints for the current user's profile and password.
+ * All endpoints are prefixed with {@code /api/v1/auth}.</p>
  */
 @Slf4j
 @RestController
@@ -148,6 +155,50 @@ public class AuthController {
             }
         }
         return ApiResponse.error("Unauthorized", "Invalid or expired token");
+    }
+
+    /**
+     * Returns the current authenticated user's profile.
+     *
+     * @param userDetails the authenticated principal
+     * @return API response containing the user profile
+     */
+    @GetMapping("/profile")
+    public ApiResponse<UserProfileResponse> getProfile(@AuthenticationPrincipal UserDetails userDetails) {
+        var userId = PrincipalUtils.requireUserId(userDetails);
+        return ApiResponse.success(authService.getProfile(userId));
+    }
+
+    /**
+     * Updates the current authenticated user's profile.
+     *
+     * @param userDetails the authenticated principal
+     * @param request     the profile update request (all fields optional)
+     * @return API response containing the updated profile
+     */
+    @PutMapping("/profile")
+    public ApiResponse<UserProfileResponse> updateProfile(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @Valid @RequestBody UpdateProfileRequest request) {
+        var userId = PrincipalUtils.requireUserId(userDetails);
+        var profile = authService.updateProfile(userId, request);
+        return ApiResponse.success(profile, "Profile updated successfully");
+    }
+
+    /**
+     * Changes the current authenticated user's password.
+     *
+     * @param userDetails the authenticated principal
+     * @param request     the old and new password
+     * @return success response
+     */
+    @PostMapping("/change-password")
+    public ApiResponse<Void> changePassword(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @Valid @RequestBody ChangePasswordRequest request) {
+        var userId = PrincipalUtils.requireUserId(userDetails);
+        authService.changePassword(userId, request);
+        return ApiResponse.success(null, "Password changed successfully");
     }
 
     /**

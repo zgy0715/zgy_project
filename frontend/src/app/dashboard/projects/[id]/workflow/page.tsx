@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, use } from 'react';
+import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { ReactFlowProvider } from 'reactflow';
 import { Spinner } from '@/components/ui/spinner';
@@ -22,9 +22,9 @@ const WorkflowEditor = dynamic(
 export default function WorkflowPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = use(params);
+  const { id } = params;
   const currentWorkflow = useWorkflowStore((s) => s.currentWorkflow);
   const fetchWorkflows = useWorkflowStore((s) => s.fetchWorkflows);
 

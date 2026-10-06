@@ -10,8 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.springframework.security.core.GrantedAuthority;
@@ -28,10 +29,15 @@ import java.util.List;
  * <p>Implements Spring Security's {@link UserDetails} for integration with
  * the authentication framework. Users can have different roles controlling
  * their access to platform features.</p>
+ *
+ * <p>刻意使用 {@code @Getter}/{@code @Setter} 而不是 {@code @Data}：{@code @Data}
+ * 会生成包含 password 与 refreshToken 的 {@code toString()}（凭据会进日志），
+ * 以及基于全部字段的 {@code equals}/{@code hashCode}（实体身份语义错误）。</p>
  */
 @Entity
 @Table(name = "users")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -67,6 +73,10 @@ public class User implements UserDetails {
     @Column(nullable = false)
     @Builder.Default
     private Boolean enabled = true;
+
+    /** 头像地址（V2 迁移新增）。 */
+    @Column(length = 500)
+    private String avatarUrl;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

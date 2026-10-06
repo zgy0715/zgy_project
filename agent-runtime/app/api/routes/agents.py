@@ -2,22 +2,26 @@
 
 import json
 import logging
-import uuid
 from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
+from app.agents.base import BaseAgent
 from app.agents.registry import AgentRegistry
+from app.api.middleware.error_handler import AgentRuntimeError
 from app.models.enums import AgentType, MessageRole, TaskStatus
 from app.models.schemas import (
     AgentChatRequest,
     AgentChatResponse,
+    AgentConfigUpdateRequest,
     AgentCreateRequest,
     AgentExecuteRequest,
     AgentExecuteResponse,
     AgentResponse,
     AgentStateResponse,
+    AgentUpdateRequest,
     ChatMessage,
     ReviewFindingResponse,
     ReviewResultResponse,
@@ -28,6 +32,12 @@ from app.services.event_service import EventService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Sanitized, client-facing error messages. The underlying exception text is
+# always logged server-side (logger.exception) and never echoed to callers,
+# so internal paths, tracebacks and credentials cannot leak.
+AGENT_EXECUTION_FAILED = "Agent execution failed"
+LLM_SERVICE_UNAVAILABLE = "LLM service unavailable"
 
 # Global agent registry instance
 _registry: AgentRegistry | None = None
@@ -52,7 +62,7 @@ def _get_event_service() -> EventService:
     return _event_service
 
 
-def _get_agent_or_404(agent_id: str):
+def _get_agent_or_404(agent_id: str) -> BaseAgent:
     """Retrieve an agent from the registry or raise 404.
 
     Supports lookup by UUID first, then by name as fallback.
@@ -72,17 +82,54 @@ def _get_agent_or_404(agent_id: str):
         )
 
 
+def _build_agent_state_response(agent: BaseAgent) -> AgentStateResponse:
+    """Build the canonical agent state payload.
+
+    Shared by ``GET /{agent_id}`` and the ``PUT`` routes so an update returns
+    exactly the same body shape as a read (the Java gateway passes it through).
+    """
+    registry = _get_registry()
+    return AgentStateResponse(
+        id=registry.get_id(agent.name),
+        agent_type=agent.agent_type,
+        name=agent.name,
+        status=agent.status,
+        messages=agent.messages,
+        current_task=agent.current_task,
+        artifacts=agent.artifacts,
+        metadata=agent.get_state(),
+        description=agent.description,
+        config=dict(agent.config),
+        created_at=agent.created_at,
+        updated_at=agent.updated_at,
+    )
+
+
 def _build_thinking_chain(agent_id: str, agent) -> ThinkingChainResponse:
     """Build a ThinkingChainResponse from an agent's thinking_steps."""
     steps = []
     for s in agent.thinking_steps:
         ts = s.get("timestamp")
+        try:
+            timestamp = (
+                datetime.fromisoformat(ts)
+                if isinstance(ts, str)
+                else datetime.utcnow()
+            )
+        except ValueError:
+            # Malformed stored timestamp — fall back instead of raising a 500.
+            logger.warning(
+                "Invalid thinking-step timestamp %r for agent %s; using utcnow()",
+                ts,
+                agent_id,
+            )
+            timestamp = datetime.utcnow()
         steps.append(ThinkingStepResponse(
             step=s.get("step", ""),
             thought=s.get("thought", ""),
             action=s.get("action"),
             observation=s.get("observation"),
-            timestamp=datetime.fromisoformat(ts) if isinstance(ts, str) else datetime.utcnow(),
+            timestamp=timestamp,
         ))
     return ThinkingChainResponse(
         agent_id=agent_id,
@@ -101,16 +148,26 @@ async def create_agent(request: AgentCreateRequest) -> AgentResponse:
 
     Returns:
         AgentResponse with the created agent details.
+
+    Raises:
+        HTTPException: 409 if an agent with the requested name already exists.
     """
     registry = _get_registry()
-    agent = registry.create(
-        name=request.name,
-        agent_type=request.agent_type,
-        description=request.description,
-        config=request.config,
-    )
-
-    state = agent.get_state()
+    try:
+        agent = registry.create(
+            name=request.name,
+            agent_type=request.agent_type,
+            description=request.description,
+            config=request.config,
+        )
+    except ValueError as exc:
+        # Only a duplicate name can reach here: agent_type is validated by the
+        # request model against AgentType, so this is a client conflict rather
+        # than a server fault (a bare ValueError used to escape as HTTP 500).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
 
     return AgentResponse(
         id=registry.get_id(agent.name),
@@ -173,18 +230,92 @@ async def get_agent_state(agent_id: str) -> AgentStateResponse:
         HTTPException: If agent is not found.
     """
     agent = _get_agent_or_404(agent_id)
+    return _build_agent_state_response(agent)
 
-    state = agent.get_state()
-    return AgentStateResponse(
-        id=agent_id,
-        agent_type=agent.agent_type,
-        name=agent.name,
-        status=agent.status,
-        messages=agent.messages,
-        current_task=agent.current_task,
-        artifacts=agent.artifacts,
-        metadata=state,
-    )
+
+@router.put("/{agent_id}", response_model=AgentStateResponse)
+async def update_agent(
+    agent_id: str,
+    request: AgentUpdateRequest,
+) -> AgentStateResponse:
+    """Update an agent's mutable metadata (name, description, type, config).
+
+    Args:
+        agent_id: Unique identifier (UUID) or name of the agent.
+        request: Fields to update; omitted fields keep their current value.
+
+    Returns:
+        AgentStateResponse with the updated agent state.
+
+    Raises:
+        HTTPException: 404 if the agent does not exist, 409 if the requested
+            name is already taken by another agent.
+    """
+    agent = _get_agent_or_404(agent_id)
+    registry = _get_registry()
+
+    try:
+        updated = registry.update(
+            agent.name,
+            new_name=request.name,
+            description=request.description,
+            agent_type=request.agent_type,
+            config=request.config,
+        )
+    except ValueError as exc:
+        # Only a name collision can reach here: agent_type is validated by the
+        # request model against AgentType.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+
+    logger.info("Updated agent %s (requested via %s)", updated.name, agent_id)
+    return _build_agent_state_response(updated)
+
+
+@router.get("/{agent_id}/config", response_model=dict[str, Any])
+async def get_agent_config(agent_id: str) -> dict[str, Any]:
+    """Read an agent's configuration mapping.
+
+    Args:
+        agent_id: Unique identifier (UUID) or name of the agent.
+
+    Returns:
+        The agent's configuration mapping.
+
+    Raises:
+        HTTPException: 404 if the agent does not exist.
+    """
+    agent = _get_agent_or_404(agent_id)
+    return dict(agent.config)
+
+
+@router.put("/{agent_id}/config", response_model=dict[str, Any])
+async def update_agent_config(
+    agent_id: str,
+    request: AgentConfigUpdateRequest,
+) -> dict[str, Any]:
+    """Replace an agent's configuration mapping.
+
+    Args:
+        agent_id: Unique identifier (UUID) or name of the agent.
+        request: The new configuration mapping (replaces the previous one).
+            Accepts either ``{"config": {...}}`` or the raw mapping.
+
+    Returns:
+        The new configuration mapping, matching ``GET /{agent_id}/config``.
+
+    Raises:
+        HTTPException: 404 if the agent does not exist.
+    """
+    agent = _get_agent_or_404(agent_id)
+    registry = _get_registry()
+
+    updated = registry.update(agent.name, config=request.resolved_config())
+
+    logger.info("Replaced config for agent %s", updated.name)
+    return dict(updated.config)
 
 
 @router.post("/{agent_id}/execute", response_model=AgentExecuteResponse)
@@ -225,14 +356,30 @@ async def execute_agent_task(
             error=None,
         )
 
-    except Exception as e:
-        logger.error("Agent %s execution failed: %s", agent_id, str(e))
+    except HTTPException:
+        raise
+
+    except AgentRuntimeError as exc:
+        # Domain-level failure: keep the 200 + FAILED response shape, but never
+        # echo the raw exception text to the caller.
+        logger.warning(
+            "Agent %s execution failed (domain error %s)", agent_id, exc.code
+        )
         return AgentExecuteResponse(
             agent_id=agent_id,
             status=TaskStatus.FAILED,
             result=None,
             artifacts=agent.artifacts,
-            error=str(e),
+            error=AGENT_EXECUTION_FAILED,
+        )
+
+    except Exception:
+        # Unexpected infrastructure failure: log the full traceback server-side
+        # and report a sanitized 502 to the client.
+        logger.exception("Agent %s execution failed", agent_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=AGENT_EXECUTION_FAILED,
         )
 
 
@@ -240,16 +387,21 @@ async def execute_agent_task(
 async def delete_agent(agent_id: str) -> None:
     """Delete an agent instance from the registry.
 
+    Accepts either the agent UUID or its name, matching the lookup used by every
+    other agent endpoint.
+
     Args:
-        agent_id: Unique identifier of the agent.
+        agent_id: Unique identifier (UUID) or name of the agent.
 
     Raises:
         HTTPException: If agent is not found.
     """
     registry = _get_registry()
+    # Resolve first so a UUID (not just a name) can be used to delete.
+    agent = _get_agent_or_404(agent_id)
     try:
-        registry.remove(agent_id)
-        logger.info("Deleted agent %s", agent_id)
+        registry.remove(agent.name)
+        logger.info("Deleted agent %s (%s)", agent.name, agent_id)
     except KeyError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -283,11 +435,6 @@ async def chat_with_agent(agent_id: str, request: AgentChatRequest) -> AgentChat
     from app.models.schemas import Message as SchemaMessage
 
     # Store user message in agent.messages
-    user_msg = ChatMessage(
-        role="user",
-        content=request.message,
-        agent_id=agent_id,
-    )
     agent.messages.append(
         SchemaMessage(
             role=MessageRole.USER,
@@ -307,6 +454,17 @@ async def chat_with_agent(agent_id: str, request: AgentChatRequest) -> AgentChat
         result = await agent.run(
             task=request.message,
             context=request.context,
+        )
+
+        # Persist the assistant reply so GET /agents/{id}/messages returns the
+        # complete transcript. Only the user message was recorded before, so the
+        # reply was missing from the agent's history (the streaming endpoint
+        # already appends it).
+        agent.messages.append(
+            SchemaMessage(
+                role=MessageRole.ASSISTANT,
+                content=result,
+            )
         )
 
         # Build assistant chat message
@@ -333,19 +491,36 @@ async def chat_with_agent(agent_id: str, request: AgentChatRequest) -> AgentChat
             status=agent.status,
         )
 
-    except Exception as e:
-        logger.error("Agent %s chat failed: %s", agent_id, str(e))
+    except HTTPException:
+        raise
 
-        # Broadcast chat error event
+    except AgentRuntimeError as exc:
+        # Domain-level failure: return the same response model with a sanitized
+        # assistant message — the raw exception text stays in the server log.
+        logger.warning(
+            "Agent %s chat failed (domain error %s)", agent_id, exc.code
+        )
+
+        # Broadcast chat error event (sanitized payload — it reaches clients)
         await event_service.emit_agent_event(
             agent_id=agent_id,
             event_type="chat_error",
-            details={"error": str(e)},
+            details={"error": AGENT_EXECUTION_FAILED},
+        )
+
+        # Record the sanitized failure in the transcript too, so the history
+        # reflects that a reply was attempted and the agent is not left with a
+        # user message that has no counterpart.
+        agent.messages.append(
+            SchemaMessage(
+                role=MessageRole.ASSISTANT,
+                content=AGENT_EXECUTION_FAILED,
+            )
         )
 
         error_msg = ChatMessage(
             role="assistant",
-            content=f"Error: {str(e)}",
+            content=AGENT_EXECUTION_FAILED,
             agent_id=agent_id,
         )
 
@@ -354,6 +529,24 @@ async def chat_with_agent(agent_id: str, request: AgentChatRequest) -> AgentChat
             message=error_msg,
             thinking_chain=None,
             status=TaskStatus.FAILED,
+        )
+
+    except Exception:
+        # Unexpected infrastructure failure: full traceback server-side only.
+        logger.exception("Agent %s chat failed", agent_id)
+
+        try:
+            await event_service.emit_agent_event(
+                agent_id=agent_id,
+                event_type="chat_error",
+                details={"error": AGENT_EXECUTION_FAILED},
+            )
+        except Exception:
+            logger.warning("Failed to broadcast chat_error event", exc_info=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=AGENT_EXECUTION_FAILED,
         )
 
 
@@ -438,14 +631,12 @@ async def chat_with_agent_stream(agent_id: str, request: AgentChatRequest):
             # Emit message_end event for frontend compatibility
             yield f"data: {json.dumps({'type': 'message_end', 'data': {'content': full_response, 'agent_id': agent_id, 'status': agent.status.value}})}\n\n"
 
-        except Exception as e:
-            logger.error("Agent %s stream chat failed: %s", agent_id, str(e))
+        except Exception:
+            logger.exception("Agent %s stream chat failed", agent_id)
             agent.status = TaskStatus.FAILED
-            # Filter sensitive information from error message
-            error_msg = str(e)
-            if "api_key" in error_msg.lower() or "sk-" in error_msg:
-                error_msg = "LLM service error occurred"
-            yield f"data: {json.dumps({'type': 'error', 'data': {'error': error_msg, 'agent_id': agent_id}})}\n\n"
+            # Never forward raw exception text (paths, credentials, tracebacks)
+            # over the stream — the client only gets a generic message.
+            yield f"data: {json.dumps({'type': 'error', 'data': {'error': LLM_SERVICE_UNAVAILABLE, 'agent_id': agent_id}})}\n\n"
 
     return StreamingResponse(
         _stream_generator(),
@@ -478,15 +669,19 @@ async def get_thinking_chain(agent_id: str) -> ThinkingChainResponse:
 
 
 @router.get("/{agent_id}/messages", response_model=list[ChatMessage])
-async def get_agent_messages(agent_id: str, limit: int = 50, offset: int = 0) -> list[ChatMessage]:
+async def get_agent_messages(
+    agent_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[ChatMessage]:
     """Get conversation history for an agent.
 
     Supports pagination with limit/offset.
 
     Args:
         agent_id: Unique identifier of the agent.
-        limit: Maximum number of messages to return (default 50).
-        offset: Number of messages to skip (default 0).
+        limit: Maximum number of messages to return (default 50, range 1-200).
+        offset: Number of messages to skip (default 0, must be >= 0).
 
     Returns:
         List of ChatMessage objects.

@@ -51,7 +51,6 @@ target/
 *.war
 *.ear
 .gradle/
-build/
 !gradle-wrapper.jar
 
 # ========================
@@ -84,9 +83,13 @@ cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
+# NOTE: do NOT add a bare `Makefile` pattern here — git matches it at any depth,
+# which would also ignore this repository's root Makefile (the documented
+# dev/build/test entry point). CMake-generated Makefiles always live inside a
+# build/ or cmake-build-*/ directory, and those are ignored above already.
 install_manifest.txt
 compile_commands.json
+*.pyd
 
 # ========================
 # Docker

@@ -49,9 +49,10 @@ export function FileTree({ files, onFileSelect, activeFilePath }: FileTreeProps)
   }, []);
 
   const handleRenameSubmit = useCallback(
-    (path: string, newName: string) => {
-      if (newName.trim()) {
-        renameFile(path, newName.trim());
+    async (path: string, newName: string) => {
+      const trimmed = newName.trim();
+      if (trimmed && trimmed !== path) {
+        await renameFile(path, trimmed);
       }
       setRenamingPath(null);
     },
@@ -63,9 +64,10 @@ export function FileTree({ files, onFileSelect, activeFilePath }: FileTreeProps)
   }, []);
 
   const handleCreateSubmit = useCallback(
-    (parentPath: string, name: string, type: 'file' | 'directory') => {
-      if (name.trim()) {
-        createFile(parentPath, name.trim(), type);
+    async (parentPath: string, name: string, type: 'file' | 'directory') => {
+      const trimmed = name.trim();
+      if (trimmed) {
+        await createFile(parentPath, trimmed, type);
       }
       setCreatingIn(null);
     },
@@ -77,8 +79,8 @@ export function FileTree({ files, onFileSelect, activeFilePath }: FileTreeProps)
   }, []);
 
   const handleDelete = useCallback(
-    (path: string) => {
-      deleteFile(path);
+    async (path: string) => {
+      await deleteFile(path);
     },
     [deleteFile]
   );

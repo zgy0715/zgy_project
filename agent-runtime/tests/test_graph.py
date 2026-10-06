@@ -123,7 +123,7 @@ class TestConditionalEdges:
             "status": "executing",
             "plan": "Plan",
             "code_output": "Code",
-            "review_output": "Code looks good, no issues found.",
+            "review_output": '```json\n{"summary": "Code looks good", "approved": true, "findings": []}\n```',
             "test_output": "",
             "deploy_output": "",
             "messages": [],
@@ -132,6 +132,28 @@ class TestConditionalEdges:
         }
         result = await route_after_reviewer(state)
         assert result == "tester"
+
+    @pytest.mark.asyncio
+    async def test_route_after_reviewer_unparseable_fails_closed(self) -> None:
+        """An unclassifiable review must not be treated as an approval."""
+        state: WorkflowState = {
+            "task": "Test task",
+            "context": {},
+            "current_agent": "reviewer",
+            "iteration": 0,
+            "max_iterations": 3,
+            "status": "executing",
+            "plan": "Plan",
+            "code_output": "Code",
+            "review_output": "Code looks good, no issues found.",
+            "test_output": "",
+            "deploy_output": "",
+            "messages": [],
+            "artifacts": [],
+            "errors": [],
+        }
+        result = await route_after_reviewer(state)
+        assert result == "coder"
 
     @pytest.mark.asyncio
     async def test_route_after_reviewer_needs_changes(self) -> None:
@@ -298,6 +320,27 @@ class TestStructuredParsing:
         """Test parsing status from JSON block."""
         result = _parse_review_severity('```json\n{"status": "APPROVED"}\n```')
         assert result == "approved"
+
+    def test_parse_review_severity_reviewer_schema_approved(self) -> None:
+        """The reviewer prompt's own schema ({"approved": true}) is understood."""
+        result = _parse_review_severity(
+            '```json\n{"summary": "Looks good", "approved": true, "findings": []}\n```'
+        )
+        assert result == "approved"
+
+    def test_parse_review_severity_reviewer_schema_rejected(self) -> None:
+        """{"approved": false} must route back for changes."""
+        result = _parse_review_severity(
+            '```json\n{"summary": "Broken", "approved": false, "findings": []}\n```'
+        )
+        assert result == "needs_changes"
+
+    def test_parse_review_severity_critical_finding_wins(self) -> None:
+        """A critical finding outweighs an optimistic approved flag."""
+        result = _parse_review_severity(
+            '```json\n{"approved": true, "findings": [{"category": "critical"}]}\n```'
+        )
+        assert result == "needs_changes"
 
     def test_parse_review_severity_empty(self) -> None:
         """Test parsing empty review output."""

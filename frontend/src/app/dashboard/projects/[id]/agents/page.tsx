@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { use } from 'react';
 import { AgentSelector } from '@/components/agents/agent-selector';
 import { ChatPanel } from '@/components/agents/chat-panel';
 import { useAgentStore } from '@/stores/agent-store';
@@ -9,15 +8,16 @@ import { useAgentStore } from '@/stores/agent-store';
 export default function AgentsPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = use(params);
+  const { id } = params;
 
   // Zustand store
   const allAgents = useAgentStore((s) => s.agents);
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
   const agents = useMemo(
-    () => allAgents.filter((a) => !a.projectId || a.projectId === id),
+    () =>
+      allAgents.filter((a) => !a.projectId || String(a.projectId) === String(id)),
     [allAgents, id]
   );
   const messages = useAgentStore((s) => s.messages);

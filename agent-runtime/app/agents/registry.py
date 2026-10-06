@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
 from app.agents.base import BaseAgent
@@ -68,7 +69,10 @@ class AgentRegistry:
             raise ValueError(f"Agent with name '{name}' already exists")
 
         if agent_type not in _AGENT_CLASSES:
-            raise ValueError(f"Unknown agent type: {agent_type}")
+            supported = ", ".join(t.value for t in _AGENT_CLASSES)
+            raise ValueError(
+                f"Unknown agent type: {agent_type} (supported: {supported})"
+            )
 
         agent_cls = _AGENT_CLASSES[agent_type]
         agent = agent_cls(
@@ -148,6 +152,17 @@ class AgentRegistry:
         self._agent_ids.pop(name, None)
         logger.info("Unregistered agent '%s'", name)
 
+    def clear(self) -> None:
+        """Remove every registered agent.
+
+        Drops all agent instances and their UUID mappings in one step. Used by
+        test isolation and by shutdown paths; single removals stay available
+        through :meth:`remove`.
+        """
+        self._agents.clear()
+        self._agent_ids.clear()
+        logger.info("Cleared all agents from the registry")
+
     def get_id(self, name: str) -> str:
         """Get the UUID of an agent by name.
 
@@ -172,6 +187,87 @@ class AgentRegistry:
             if id_ == agent_id:
                 return self._agents.get(name)
         return None
+
+    def update(
+        self,
+        name: str,
+        *,
+        new_name: str | None = None,
+        description: str | None = None,
+        agent_type: AgentType | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> BaseAgent:
+        """Update an existing agent's mutable metadata.
+
+        Args:
+            name: Current unique name of the agent (the registry key).
+            new_name: Replacement name; the agent is re-keyed and keeps its UUID.
+            description: Replacement description.
+            agent_type: Replacement agent type. ``BaseAgent.agent_type`` is a
+                read-only property, so a type change replaces the instance and
+                carries the runtime state (messages, artifacts, thinking steps,
+                status, created_at) over to the new one.
+            config: Replacement configuration mapping.
+
+        Returns:
+            The updated agent instance.
+
+        Raises:
+            KeyError: If no agent with the given name exists.
+            ValueError: If ``new_name`` is already taken by another agent, or the
+                requested agent type is not registered.
+        """
+        agent = self.get(name)
+
+        target_name = new_name if new_name is not None else agent.name
+        if target_name != name and target_name in self._agents:
+            raise ValueError(f"Agent with name '{target_name}' already exists")
+
+        target_type = agent_type if agent_type is not None else agent.agent_type
+        if target_type not in _AGENT_CLASSES:
+            supported = ", ".join(t.value for t in _AGENT_CLASSES)
+            raise ValueError(f"Unknown agent type: {target_type} (supported: {supported})")
+
+        target_description = (
+            description if description is not None else agent.description
+        )
+        target_config = dict(config) if config is not None else dict(agent.config)
+
+        if target_type != agent.agent_type:
+            replacement = _AGENT_CLASSES[target_type](
+                name=target_name,
+                description=target_description,
+                config=target_config,
+            )
+            # Preserve conversation and provenance across the type change.
+            replacement.messages = list(agent.messages)
+            replacement.artifacts = list(agent.artifacts)
+            replacement.thinking_steps = list(agent.thinking_steps)
+            replacement.status = agent.status
+            replacement.created_at = agent.created_at
+            agent = replacement
+        else:
+            agent.name = target_name
+            agent.description = target_description
+            agent.config = target_config
+
+        agent.updated_at = datetime.utcnow()
+
+        if target_name != name:
+            del self._agents[name]
+            agent_id = self._agent_ids.pop(name, str(uuid.uuid4()))
+            self._agents[target_name] = agent
+            self._agent_ids[target_name] = agent_id
+        else:
+            self._agents[name] = agent
+
+        logger.info(
+            "Updated agent '%s' (now '%s', type %s)",
+            name,
+            agent.name,
+            agent.agent_type.value,
+        )
+        return agent
 
     def get_state(self, name: str) -> dict[str, Any]:
         """Get the state of a specific agent.

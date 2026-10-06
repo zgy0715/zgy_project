@@ -63,6 +63,10 @@ public:
     /// Look up a vector by id.
     [[nodiscard]] std::optional<VectorRecord> get(int64_t id) const;
 
+    /// Make sure at least @p required elements fit in the index, growing the
+    /// capacity when necessary. Never shrinks below the current element count.
+    void ensure_capacity(std::size_t required);
+
     // ── Search ───────────────────────────────────────────────────────────
 
     /// Search for k nearest neighbors.

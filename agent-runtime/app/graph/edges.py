@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
 
 from app.graph.state import WorkflowState
 
@@ -38,29 +37,34 @@ def _parse_review_severity(review_output: str) -> str:
     if not review_output:
         return ""
 
-    # Check for markdown severity headers
-    severity_match = re.search(
-        r"##\s*Severity\s*:\s*(CRITICAL|ERROR|WARNING|INFO|LOW)",
-        review_output,
-        re.IGNORECASE,
-    )
-    if severity_match:
-        level = severity_match.group(1).upper()
-        if level in ("CRITICAL", "ERROR"):
-            return "needs_changes"
-        return "approved"
-
-    # Check for explicit status markers
-    if re.search(r"\bAPPROVED\b", review_output, re.IGNORECASE):
-        return "approved"
-    if re.search(r"\bNEEDS[_\s]CHANGES\b", review_output, re.IGNORECASE):
-        return "needs_changes"
-
-    # Check for JSON blocks with severity or status
+    # Structured JSON is checked FIRST. The reviewer system prompt asks for
+    # {"summary": ..., "approved": true|false, "findings": [{"category": ...}]},
+    # so the bare word "approved" occurs in that payload as a JSON KEY. Running
+    # the plain-text marker check first would match that key and report an
+    # approval even for "approved": false, masking both a failed review and any
+    # critical finding. Parsing the JSON first also lets a critical finding
+    # outrank an optimistic "approved": true.
     json_pattern = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
     for match in json_pattern.finditer(review_output):
         try:
             data = json.loads(match.group(1))
+            findings = data.get("findings")
+            if isinstance(findings, list):
+                categories = {
+                    str(item.get("category", "")).strip().lower()
+                    for item in findings
+                    if isinstance(item, dict)
+                }
+                if "critical" in categories:
+                    return "needs_changes"
+            approved = data.get("approved")
+            if isinstance(approved, str):
+                approved = approved.strip().lower() in ("true", "yes", "approved")
+            if approved is True:
+                return "approved"
+            if approved is False:
+                return "needs_changes"
+
             severity = data.get("severity", "").upper()
             status_val = data.get("status", "").upper()
             if severity in ("CRITICAL", "ERROR"):
@@ -73,6 +77,25 @@ def _parse_review_severity(review_output: str) -> str:
                 return "needs_changes"
         except (json.JSONDecodeError, AttributeError):
             continue
+
+    # Markdown severity headers
+    severity_match = re.search(
+        r"##\s*Severity\s*:\s*(CRITICAL|ERROR|WARNING|INFO|LOW)",
+        review_output,
+        re.IGNORECASE,
+    )
+    if severity_match:
+        level = severity_match.group(1).upper()
+        if level in ("CRITICAL", "ERROR"):
+            return "needs_changes"
+        return "approved"
+
+    # Explicit status markers. Rejection outranks approval, and a quoted JSON key
+    # (for example "approved": false) is never mistaken for a status marker.
+    if re.search(r"\bNEEDS[_\s]CHANGES\b", review_output, re.IGNORECASE):
+        return "needs_changes"
+    if re.search(r'\bAPPROVED\b(?!\s*"\s*:)', review_output, re.IGNORECASE):
+        return "approved"
 
     return ""
 
@@ -283,17 +306,35 @@ async def route_after_reviewer(state: WorkflowState) -> str:
     if not classification:
         classification = await _llm_classify_output(review_output, "review")
 
-    # Tier 3: Keyword fallback
+    # Tier 3: Fail closed. A review that could not be classified (empty or
+    # unparseable output) must never be treated as an approval, otherwise a
+    # failed review would advance to the tester instead of triggering a retry.
     if not classification:
-        if "critical" in review_output.lower() or "error" in review_output.lower():
-            classification = "needs_changes"
-        else:
-            classification = "approved"
-        logger.info("Using keyword fallback for review classification: %s", classification)
+        # The keyword scan is kept for observability only; the decision itself
+        # is fail-closed.
+        keyword_hint = (
+            "needs_changes"
+            if "critical" in review_output.lower() or "error" in review_output.lower()
+            else "no_keyword_hint"
+        )
+        classification = "needs_changes"
+        logger.warning(
+            "Review classification unparseable (keyword hint: %s); failing "
+            "closed and routing back to coder for retry. Review output: %.200s",
+            keyword_hint,
+            review_output,
+        )
 
     if classification == "needs_changes" and iteration < max_iterations:
         logger.info("Review found issues, routing back to coder (iteration %d)", iteration)
         return "coder"
+
+    if classification == "needs_changes":
+        logger.warning(
+            "Review found issues but max iterations (%d) reached, routing to tester",
+            max_iterations,
+        )
+        return "tester"
 
     logger.info("Review passed, routing to tester")
     return "tester"
@@ -326,13 +367,20 @@ async def route_after_tester(state: WorkflowState) -> str:
     if not classification:
         classification = await _llm_classify_output(test_output, "test")
 
-    # Tier 3: Keyword fallback
+    # Tier 3: Fail closed. Test output that could not be classified (empty or
+    # unparseable) must never be treated as a pass, otherwise an unverified
+    # run would advance to deployment instead of triggering a retry.
     if not classification:
-        if "fail" in test_output.lower():
-            classification = "failed"
-        else:
-            classification = "passed"
-        logger.info("Using keyword fallback for test classification: %s", classification)
+        # The keyword scan is kept for observability only; the decision itself
+        # is fail-closed.
+        keyword_hint = "failed" if "fail" in test_output.lower() else "no_keyword_hint"
+        classification = "failed"
+        logger.warning(
+            "Test classification unparseable (keyword hint: %s); failing "
+            "closed and routing back to coder for retry. Test output: %.200s",
+            keyword_hint,
+            test_output,
+        )
 
     if classification == "failed" and iteration < max_iterations:
         logger.info("Tests failed, routing back to coder (iteration %d)", iteration)

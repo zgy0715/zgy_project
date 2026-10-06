@@ -1,6 +1,8 @@
-﻿﻿﻿﻿package com.deepagent.config;
+package com.deepagent.config;
 
+import com.deepagent.auth.entity.User;
 import com.deepagent.auth.jwt.JwtTokenProvider;
+import com.deepagent.project.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -11,11 +13,13 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * STOMP channel interceptor that authenticates WebSocket connections via JWT.
@@ -37,6 +41,14 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
     private final JwtTokenProvider jwtTokenProvider;
     private final UserDetailsService userDetailsService;
     private final RedisTemplate<String, String> redisTemplate;
+    private final ProjectRepository projectRepository;
+
+    /**
+     * Destinations that Spring resolves against the current session's user
+     * (i.e. {@code /user/queue/**} rather than {@code /user/{username}/**}).
+     */
+    private static final Set<String> SESSION_SCOPED_PREFIXES =
+            Set.of("/queue", "/topic", "/exchange", "/amq/queue", "/temp-queue", "/reply");
 
     /**
      * Intercepts STOMP commands to authenticate CONNECT frames
@@ -52,7 +64,7 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
         // Handle CONNECT: authenticate via JWT
         if (StompCommand.CONNECT.equals(accessor.getCommand())) {
-            return handleConnect(accessor);
+            return handleConnect(accessor, message);
         }
 
         // Handle SUBSCRIBE: verify destination authorization
@@ -66,7 +78,7 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
     /**
      * Authenticate the STOMP CONNECT frame using a JWT bearer token.
      */
-    private Message<?> handleConnect(StompHeaderAccessor accessor) {
+    private Message<?> handleConnect(StompHeaderAccessor accessor, Message<?> message) {
         var authHeaders = accessor.getNativeHeader(AUTHORIZATION_HEADER);
 
         if (authHeaders == null || authHeaders.isEmpty()) {
@@ -99,7 +111,8 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
 
             accessor.setUser(authentication);
             log.debug("WebSocket STOMP authenticated user: {}", username);
-            return (Message<?>) accessor.getMessageHeaders(); // not used, but keeps flow
+            // Return the original message: StompHeaderAccessor is not itself a Message
+            return message;
         } catch (org.springframework.messaging.MessageDeliveryException e) {
             throw e;
         } catch (Exception e) {
@@ -124,9 +137,16 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
             throw new org.springframework.messaging.MessageDeliveryException("Authentication required to subscribe");
         }
 
-        // User queue subscriptions are always allowed (Spring handles user-scoped routing)
+        // User queue subscriptions are always allowed (Spring handles user-scoped routing),
+        // but /user/{username}/** must not target another user's queue.
         if (destination.startsWith("/user/")) {
-            return message;
+            if (isOwnUserDestination(destination, user)) {
+                return message;
+            }
+            log.warn("User '{}' attempted to subscribe to another user's destination: {}",
+                    user.getName(), destination);
+            throw new org.springframework.messaging.MessageDeliveryException(
+                    "Subscription to '" + destination + "' is not authorized");
         }
 
         // Allow public broker topics like /topic/public
@@ -134,9 +154,17 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
             return message;
         }
 
-        // For project topics, extract projectId and validate (coarse check: user is authenticated)
-        // Detailed per-project authorization would require a project membership check service
+        // Project topics are scoped to the project owner: /topic/project/{projectId}[/...]
         if (destination.startsWith("/topic/project/")) {
+            Long projectId = extractProjectId(destination);
+            Long userId = resolveUserId(user);
+            if (projectId == null || userId == null
+                    || !projectRepository.existsByIdAndOwnerId(projectId, userId)) {
+                log.warn("User '{}' is not the owner of project {} (destination: {})",
+                        user.getName(), projectId, destination);
+                throw new org.springframework.messaging.MessageDeliveryException(
+                        "Subscription to '" + destination + "' is not authorized");
+            }
             log.debug("User '{}' subscribed to project topic: {}", user.getName(), destination);
             return message;
         }
@@ -145,6 +173,46 @@ public class WebSocketAuthInterceptor implements ChannelInterceptor {
         log.warn("User '{}' attempted to subscribe to unauthorized destination: {}", user.getName(), destination);
         throw new org.springframework.messaging.MessageDeliveryException(
                 "Subscription to '" + destination + "' is not authorized");
+    }
+
+    /**
+     * Checks that a {@code /user/**} destination either targets the current
+     * session (e.g. {@code /user/queue/notifications}) or the current user.
+     */
+    private boolean isOwnUserDestination(String destination, java.security.Principal user) {
+        String remainder = destination.substring("/user/".length());
+        for (String prefix : SESSION_SCOPED_PREFIXES) {
+            if (remainder.equals(prefix) || remainder.startsWith(prefix + "/")) {
+                return true;
+            }
+        }
+        int slash = remainder.indexOf('/');
+        String targetUser = (slash > 0) ? remainder.substring(0, slash) : remainder;
+        return targetUser.equals(user.getName());
+    }
+
+    /**
+     * Extracts the project ID from a {@code /topic/project/{projectId}} destination.
+     */
+    private Long extractProjectId(String destination) {
+        String remainder = destination.substring("/topic/project/".length());
+        int slash = remainder.indexOf('/');
+        String raw = (slash > 0) ? remainder.substring(0, slash) : remainder;
+        try {
+            return Long.valueOf(raw);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Resolves the numeric user ID of the authenticated STOMP principal.
+     */
+    private Long resolveUserId(java.security.Principal user) {
+        if (user instanceof Authentication authentication && authentication.getPrincipal() instanceof User entity) {
+            return entity.getId();
+        }
+        return null;
     }
 
     /**

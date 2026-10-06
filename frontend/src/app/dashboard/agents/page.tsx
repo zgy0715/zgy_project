@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/spinner';
 import { useAgentStore } from '@/stores/agent-store';
 import { AGENT_TYPE_META, AGENT_STATUS_META } from '@/lib/constants';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -14,7 +15,11 @@ const AGENT_TYPES = ['coder', 'reviewer', 'tester', 'deployer'] as const;
 export default function AgentsPage() {
   const agents = useAgentStore((s) => s.agents);
   const thinkingChains = useAgentStore((s) => s.thinkingChains);
+  const fetchAgents = useAgentStore((s) => s.fetchAgents);
   const createAgent = useAgentStore((s) => s.createAgent);
+  const saveAgent = useAgentStore((s) => s.saveAgent);
+  const startAgent = useAgentStore((s) => s.startAgent);
+  const cancelTask = useAgentStore((s) => s.cancelTask);
   const deleteAgent = useAgentStore((s) => s.deleteAgent);
   const updateAgent = useAgentStore((s) => s.updateAgent);
   const isLoading = useAgentStore((s) => s.isLoading);
@@ -28,17 +33,27 @@ export default function AgentsPage() {
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  // Task id returned by the gateway when an agent is started, kept so the
+  // 停止 button can cancel the run it started.
+  const [taskIds, setTaskIds] = useState<Record<string, string>>({});
+  const [busyAgentId, setBusyAgentId] = useState<string | null>(null);
+
+  // Load the agent list on mount (previously never fetched at all).
+  useEffect(() => {
+    fetchAgents();
+  }, [fetchAgents]);
 
   const handleCreate = async () => {
     if (!agentName.trim()) return;
     const typeMeta = AGENT_TYPE_META[agentType as keyof typeof AGENT_TYPE_META] ?? { label: agentType, color: '#94a3b8' };
-    await createAgent({
+    const created = await createAgent({
       name: agentName.trim(),
       agentType: agentType as Agent['agentType'],
       description: agentDesc.trim() || `${typeMeta.label} Agent`,
       capabilities: getCapabilitiesForType(agentType),
       model: 'gpt-4o',
     });
+    if (!created) return; // keep the dialog open so the error is visible
     setShowCreateDialog(false);
     setAgentName('');
     setAgentType('coder');
@@ -46,8 +61,8 @@ export default function AgentsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    await deleteAgent(id);
-    setDeleteConfirmId(null);
+    const deleted = await deleteAgent(id);
+    if (deleted) setDeleteConfirmId(null);
   };
 
   const handleEdit = (agent: Agent) => {
@@ -56,22 +71,41 @@ export default function AgentsPage() {
     setEditDesc(agent.description);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingAgent || !editName.trim()) return;
-    updateAgent(editingAgent.id, {
+    const saved = await saveAgent(editingAgent.id, {
       name: editName.trim(),
       description: editDesc.trim(),
     });
-    setEditingAgent(null);
+    if (saved) setEditingAgent(null);
   };
 
-  const handleToggleStatus = (agent: Agent) => {
-    if (agent.status === 'pending') {
-      updateAgent(agent.id, { status: 'executing' });
-    } else if (agent.status === 'executing' || agent.status === 'planning') {
-      updateAgent(agent.id, { status: 'completed' });
-    } else {
-      updateAgent(agent.id, { status: 'pending' });
+  const isAgentActive = (agent: Agent) =>
+    agent.status === 'planning' ||
+    agent.status === 'executing' ||
+    agent.status === 'reviewing';
+
+  const handleToggleStatus = async (agent: Agent) => {
+    setBusyAgentId(agent.id);
+    try {
+      if (isAgentActive(agent)) {
+        const taskId = taskIds[agent.id];
+        if (taskId) {
+          await cancelTask(taskId);
+        } else {
+          // Started outside this page: nothing to cancel server-side.
+          updateAgent(agent.id, { status: 'cancelled' });
+        }
+        return;
+      }
+
+      const task = agent.description?.trim() || agent.name;
+      const taskId = await startAgent(agent.id, agent.projectId ?? '', task);
+      if (taskId) {
+        setTaskIds((prev) => ({ ...prev, [agent.id]: taskId }));
+      }
+    } finally {
+      setBusyAgentId(null);
     }
   };
 
@@ -90,6 +124,13 @@ export default function AgentsPage() {
           新建 Agent
         </Button>
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
       {/* Create Agent Dialog */}
       {showCreateDialog && (
@@ -200,13 +241,17 @@ export default function AgentsPage() {
       )}
 
       {/* Agents grid */}
-      {agents.length === 0 ? (
+      {isLoading && agents.length === 0 ? (
+        <div className="text-center py-12 text-zinc-400">
+          <Spinner />
+        </div>
+      ) : agents.length === 0 ? (
         <div className="text-center py-12 text-zinc-400">
           <svg className="w-16 h-16 text-zinc-600 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
           <p className="text-lg mb-2">暂无Agent</p>
-          <p className="text-sm">点击"新建 Agent"创建你的第一个AI Agent</p>
+          <p className="text-sm">点击「新建 Agent」创建你的第一个AI Agent</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -215,6 +260,7 @@ export default function AgentsPage() {
               key={agent.id}
               agent={agent}
               thinkingChain={thinkingChains.find((tc) => tc.agentId === agent.id)}
+              busy={busyAgentId === agent.id}
               onEdit={handleEdit}
               onDelete={(id) => setDeleteConfirmId(id)}
               onToggleStatus={handleToggleStatus}
@@ -239,12 +285,14 @@ function getCapabilitiesForType(type: string): string[] {
 function AgentCard({
   agent,
   thinkingChain,
+  busy,
   onEdit,
   onDelete,
   onToggleStatus,
 }: {
   agent: Agent;
   thinkingChain?: { steps: { step: string; thought: string }[] };
+  busy?: boolean;
   onEdit: (agent: Agent) => void;
   onDelete: (id: string) => void;
   onToggleStatus: (agent: Agent) => void;
@@ -355,9 +403,10 @@ function AgentCard({
             variant="outline"
             size="sm"
             className="flex-1 text-xs"
+            disabled={busy}
             onClick={() => onToggleStatus(agent)}
           >
-            {agent.status === 'pending' ? '启动' : agent.status === 'completed' || agent.status === 'failed' ? '重启' : '停止'}
+            {busy ? '处理中...' : isActive ? '停止' : agent.status === 'pending' ? '启动' : '重启'}
           </Button>
           <Button
             variant="outline"

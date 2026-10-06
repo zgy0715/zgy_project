@@ -10,23 +10,27 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 
 /**
  * Task entity representing a schedulable unit in a DAG workflow.
  *
  * <p>Each task belongs to a project and can have dependencies on other tasks.
  * The DAG scheduler uses these dependencies to determine execution order.</p>
+ *
+ * <p>使用 {@code @Getter}/{@code @Setter} 而非 {@code @Data}：避免基于全部字段的
+ * {@code equals}/{@code hashCode}（实体应用身份比较）与输出全部字段的 {@code toString()}。</p>
  */
 @Entity
 @Table(name = "tasks")
-@Data
+@Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -50,6 +54,10 @@ public class Task {
 
     @Column(nullable = false)
     private Long projectId;
+
+    /** 任务归属用户（V2 迁移新增，历史数据为 NULL）。 */
+    @Column
+    private Long ownerId;
 
     @Column(nullable = false, length = 200)
     private String name;

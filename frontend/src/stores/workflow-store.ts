@@ -9,6 +9,34 @@ import type {
   WorkflowExecution,
 } from '@/types';
 import { workflowsApi } from '@/lib/api-client';
+import { asArray, getErrorMessage } from '@/lib/utils';
+
+// A run is considered lost if no terminal event arrives within this window;
+// this stops `isExecuting` from latching on forever when WebSocket events are
+// missed (disconnect, backend restart, ...).
+const EXECUTION_GUARD_MS = 5 * 60 * 1000;
+let executionGuardTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearExecutionGuard(): void {
+  if (executionGuardTimer) {
+    clearTimeout(executionGuardTimer);
+    executionGuardTimer = null;
+  }
+}
+
+function startExecutionGuard(workflowId: string): void {
+  clearExecutionGuard();
+  executionGuardTimer = setTimeout(() => {
+    executionGuardTimer = null;
+    const state = useWorkflowStore.getState();
+    if (state.isExecuting && state.currentWorkflow?.id === workflowId) {
+      useWorkflowStore.setState({
+        isExecuting: false,
+        error: '工作流执行超时，未收到实时事件，已解除执行中状态',
+      });
+    }
+  }, EXECUTION_GUARD_MS);
+}
 
 interface WorkflowState {
   workflows: Workflow[];
@@ -46,12 +74,12 @@ interface WorkflowState {
   resetWorkflow: () => void;
 
   // API actions
-  fetchWorkflows: (projectId: string) => Promise<void>;
+  fetchWorkflows: (projectId?: string) => Promise<void>;
   fetchWorkflow: (projectId: string, id: string) => Promise<void>;
   saveWorkflow: (projectId: string) => Promise<void>;
   executeWorkflow: (projectId: string) => Promise<void>;
-  createWorkflow: (data: Partial<Workflow>) => Promise<void>;
-  deleteWorkflow: (id: string) => Promise<void>;
+  createWorkflow: (data: Partial<Workflow>) => Promise<boolean>;
+  deleteWorkflow: (id: string) => Promise<boolean>;
 
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -156,7 +184,10 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     }),
 
   setExecution: (execution) => set({ execution }),
-  setExecuting: (isExecuting) => set({ isExecuting }),
+  setExecuting: (isExecuting) => {
+    if (!isExecuting) clearExecutionGuard();
+    set({ isExecuting });
+  },
 
   runWorkflow: () => {
     const { currentWorkflow, isExecuting } = get();
@@ -216,18 +247,24 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   fetchWorkflows: async (projectId) => {
     set({ isLoading: true, error: null });
     try {
-      const response = await workflowsApi.list(projectId ? { projectId } : undefined);
-      const workflows = response.data.data;
+      // The gateway list endpoint has no project filter; scope client-side.
+      const response = await workflowsApi.list();
+      const allWorkflows = asArray<Workflow>(response.data.data);
+      const workflows = projectId
+        ? allWorkflows.filter(
+            (w) => !w.projectId || String(w.projectId) === String(projectId)
+          )
+        : allWorkflows;
       set({
         workflows,
         currentWorkflow: workflows[0] ?? null,
         isLoading: false,
       });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取工作流列表失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取工作流列表失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -237,10 +274,10 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
       const response = await workflowsApi.detail(id);
       set({ currentWorkflow: response.data.data, isLoading: false });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '获取工作流详情失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '获取工作流详情失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -258,10 +295,10 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
       });
       set({ isLoading: false });
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '保存工作流失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '保存工作流失败'),
+        isLoading: false,
+      });
     }
   },
 
@@ -269,20 +306,37 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     const { currentWorkflow, isExecuting } = get();
     if (!currentWorkflow || isExecuting) return;
 
+    const workflowId = currentWorkflow.id;
     set({ isExecuting: true, isPaused: false, error: null });
     try {
-      const response = await workflowsApi.execute(currentWorkflow.id);
+      const response = await workflowsApi.execute(workflowId);
       const execution = response.data.data;
-      set({
+      const finalStatus =
+        execution?.status === 'completed' || execution?.status === 'failed'
+          ? execution.status
+          : null;
+
+      set((state) => ({
         execution,
-        currentWorkflow: { ...currentWorkflow, status: 'running' },
-      });
-      // Real-time node status updates will come via WebSocket (use-websocket hook)
+        currentWorkflow: state.currentWorkflow
+          ? { ...state.currentWorkflow, status: finalStatus ?? 'running' }
+          : state.currentWorkflow,
+        isExecuting: finalStatus === null,
+      }));
+
+      if (finalStatus === null) {
+        // Real-time node updates keep coming via WebSocket (use-websocket hook);
+        // the guard frees the button if they never arrive.
+        startExecutionGuard(workflowId);
+      } else {
+        clearExecutionGuard();
+      }
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '执行工作流失败';
-      set({ error: message, isExecuting: false });
+      clearExecutionGuard();
+      set({
+        error: getErrorMessage(error, '执行工作流失败'),
+        isExecuting: false,
+      });
     }
   },
 
@@ -295,11 +349,13 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
         workflows: [...state.workflows, newWorkflow],
         isLoading: false,
       }));
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '创建工作流失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '创建工作流失败'),
+        isLoading: false,
+      });
+      return false;
     }
   },
 
@@ -309,11 +365,13 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
       await workflowsApi.delete(id);
       get().removeWorkflow(id);
       set({ isLoading: false });
+      return true;
     } catch (error) {
-      const message =
-        (error as any)?.response?.data?.message ??
-        '删除工作流失败';
-      set({ error: message, isLoading: false });
+      set({
+        error: getErrorMessage(error, '删除工作流失败'),
+        isLoading: false,
+      });
+      return false;
     }
   },
 

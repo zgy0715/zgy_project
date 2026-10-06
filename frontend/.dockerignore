@@ -1,0 +1,37 @@
+# Contents excluded from the Docker build context.
+#
+# IMPORTANT: the builder stage runs `COPY . .` AFTER `npm ci`, so anything left
+# in the context would be copied over the freshly installed dependencies. Without
+# this file the host `node_modules/` and `.next/` shadow the image's own copies.
+
+# Dependencies (installed inside the image by the `deps` stage)
+node_modules
+**/node_modules
+
+# Build output (rebuilt inside the image by `npm run build`)
+.next
+out
+build
+dist
+
+# Version control / ignore files
+.git
+.gitignore
+.dockerignore
+
+# Local environment / secrets — NEXT_PUBLIC_* are passed as build args, not files
+.env
+.env.local
+.env*.local
+
+# Test / coverage / type-check artifacts
+coverage
+.nyc_output
+junit.xml
+*.tsbuildinfo
+
+# Local tooling / editor state
+.idea
+.vscode
+*.log
+.DS_Store

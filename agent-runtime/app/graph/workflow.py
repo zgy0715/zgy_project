@@ -230,8 +230,9 @@ class WorkflowEngine:
         """
         graph = StateGraph(WorkflowState)
 
-        # Track node IDs for edge resolution
+        # Track node IDs and their agent types for edge resolution
         node_ids: set[str] = set()
+        node_agent_types: dict[str, str] = {}
         entry_point: str | None = None
 
         # Add nodes
@@ -248,6 +249,7 @@ class WorkflowEngine:
             node_fn = _AGENT_NODE_MAP[agent_type]
             graph.add_node(node_id, node_fn)
             node_ids.add(node_id)
+            node_agent_types[node_id] = agent_type
 
             # First node is the entry point
             if entry_point is None:
@@ -275,49 +277,48 @@ class WorkflowEngine:
             unconditional_edges = [e for e in source_edges if not e.get("condition")]
 
             if conditional_edges:
-                # Build conditional edge mapping
-                route_fn = _CONDITIONAL_ROUTE_MAP.get(source_id)
-                if route_fn is not None:
-                    # Use the built-in routing function for known agent types
-                    response_map: dict[str, str] = {}
+                # The routing functions are keyed by AGENT TYPE, so the handler
+                # must be resolved from the node's agent type — not from its id.
+                agent_type = node_agent_types.get(source_id, "")
+                route_fn = _CONDITIONAL_ROUTE_MAP.get(agent_type)
+                if route_fn is None:
+                    # Never silently downgrade a conditional edge to a static
+                    # one: that drops the retry/review loop without any trace.
+                    raise ValueError(
+                        f"Conditional edges from node '{source_id}' (agent type "
+                        f"'{agent_type}') cannot be routed: no routing function is "
+                        f"registered for this agent type. Available routing "
+                        f"functions: {list(_CONDITIONAL_ROUTE_MAP.keys())}"
+                    )
 
-                    for edge in conditional_edges:
-                        target = edge["target"]
-                        condition = edge["condition"]
-                        # Map condition keywords to target nodes
-                        response_map[condition] = target
+                # Use the built-in routing function for known agent types
+                response_map: dict[str, str] = {}
 
-                    # Add END mapping if not present
-                    if "end" not in response_map:
-                        response_map["end"] = END
+                for edge in conditional_edges:
+                    target = edge["target"]
+                    condition = edge["condition"]
+                    # Map condition keywords to target nodes
+                    response_map[condition] = target
 
-                    # Ensure all targets are valid node IDs or END
-                    resolved_map: dict[str, str] = {}
-                    for key, target in response_map.items():
-                        if target == "end" or target == END:
-                            resolved_map[key] = END
-                        elif target in node_ids:
-                            resolved_map[key] = target
-                        else:
-                            logger.warning(
-                                "Conditional edge target '%s' not found, mapping to END",
-                                target,
-                            )
-                            resolved_map[key] = END
+                # Add END mapping if not present
+                if "end" not in response_map:
+                    response_map["end"] = END
 
-                    graph.add_conditional_edges(source_id, route_fn, resolved_map)
-                else:
-                    # No built-in route function; add as static edges
-                    for edge in conditional_edges:
-                        target = edge["target"]
-                        if target in node_ids:
-                            graph.add_edge(source_id, target)
-                        else:
-                            logger.warning(
-                                "Edge target '%s' not found, skipping edge from '%s'",
-                                target,
-                                source_id,
-                            )
+                # Ensure all targets are valid node IDs or END
+                resolved_map: dict[str, str] = {}
+                for key, target in response_map.items():
+                    if target == "end" or target == END:
+                        resolved_map[key] = END
+                    elif target in node_ids:
+                        resolved_map[key] = target
+                    else:
+                        logger.warning(
+                            "Conditional edge target '%s' not found, mapping to END",
+                            target,
+                        )
+                        resolved_map[key] = END
+
+                graph.add_conditional_edges(source_id, route_fn, resolved_map)
 
             # Add unconditional (static) edges
             for edge in unconditional_edges:

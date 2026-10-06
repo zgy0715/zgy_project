@@ -7,14 +7,24 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import { useProjectStore } from '@/stores/project-store';
+import { AGENT_TYPE_META } from '@/lib/constants';
+import { formatRelativeTime } from '@/lib/utils';
+import { projectStatusLabel, projectStatusVariant } from '@/types';
+
+const PROJECT_AGENT_TYPES = ['coordinator', 'coder', 'reviewer', 'tester', 'deployer'] as const;
 
 export default function ProjectsPage() {
-  const { projects, fetchProjects, createProject, deleteProject, isLoading } = useProjectStore();
+  const projects = useProjectStore((s) => s.projects);
+  const fetchProjects = useProjectStore((s) => s.fetchProjects);
+  const createProject = useProjectStore((s) => s.createProject);
+  const deleteProject = useProjectStore((s) => s.deleteProject);
+  const isLoading = useProjectStore((s) => s.isLoading);
+  const error = useProjectStore((s) => s.error);
+
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [techStack, setTechStack] = useState('');
-  const [repository, setRepository] = useState('');
+  const [agentType, setAgentType] = useState<string>('coordinator');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,25 +33,25 @@ export default function ProjectsPage() {
 
   const handleCreate = async () => {
     if (!name.trim()) return;
-    await createProject({
+    const created = await createProject({
       name: name.trim(),
       description: description.trim(),
-      techStack: techStack ? techStack.split(',').map((t) => t.trim()).filter(Boolean) : [],
-      repository: repository.trim() || undefined,
+      agentType,
     });
+    if (!created) return; // keep the dialog open so the error is visible
     setShowCreateDialog(false);
     setName('');
     setDescription('');
-    setTechStack('');
-    setRepository('');
+    setAgentType('coordinator');
   };
 
   const handleDelete = async (id: string) => {
-    await deleteProject(id);
-    setDeleteConfirmId(null);
+    const deleted = await deleteProject(id);
+    if (deleted) setDeleteConfirmId(null);
   };
 
-  if (isLoading) {
+  // Only block the whole page on the very first load; later mutations keep the list.
+  if (isLoading && projects.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Spinner size="lg" />
@@ -64,6 +74,13 @@ export default function ProjectsPage() {
           新建项目
         </Button>
       </div>
+
+      {/* Error banner */}
+      {error && (
+        <div className="px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
       {/* Create Project Dialog */}
       {showCreateDialog && (
@@ -93,24 +110,31 @@ export default function ProjectsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-300 mb-1.5">技术栈（逗号分隔）</label>
-                <input
-                  type="text"
-                  value={techStack}
-                  onChange={(e) => setTechStack(e.target.value)}
-                  placeholder="例如：Java, Spring Boot, PostgreSQL"
-                  className="w-full rounded-lg border border-surface-3 bg-surface-0 px-4 py-2.5 text-white placeholder:text-zinc-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-300 mb-1.5">仓库地址</label>
-                <input
-                  type="text"
-                  value={repository}
-                  onChange={(e) => setRepository(e.target.value)}
-                  placeholder="https://github.com/..."
-                  className="w-full rounded-lg border border-surface-3 bg-surface-0 px-4 py-2.5 text-white placeholder:text-zinc-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                />
+                <label className="block text-sm font-medium text-zinc-300 mb-1.5">主 Agent 类型</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {PROJECT_AGENT_TYPES.map((type) => {
+                    const meta = AGENT_TYPE_META[type] ?? { label: type, color: '#94a3b8' };
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setAgentType(type)}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                          agentType === type
+                            ? 'border-brand-500 bg-brand-600/20 text-brand-400'
+                            : 'border-surface-3 text-zinc-400 hover:border-surface-3 hover:bg-surface-2'
+                        }`}
+                      >
+                        <div
+                          className="w-6 h-6 rounded mx-auto mb-1 flex items-center justify-center text-white text-xs font-bold"
+                          style={{ backgroundColor: meta.color }}
+                        >
+                          {meta.label.charAt(0)}
+                        </div>
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
@@ -166,10 +190,8 @@ export default function ProjectsPage() {
                     </h3>
                   </Link>
                   <div className="flex items-center gap-2 ml-2 shrink-0">
-                    <Badge
-                      variant={project.status === 'active' ? 'success' : 'secondary'}
-                    >
-                      {project.status}
+                    <Badge variant={projectStatusVariant(project.status)}>
+                      {projectStatusLabel(project.status)}
                     </Badge>
                     <button
                       onClick={() => setDeleteConfirmId(project.id)}
@@ -190,34 +212,26 @@ export default function ProjectsPage() {
                   </p>
                 </Link>
 
-                {/* Tech stack */}
+                {/* Agent type */}
                 <div className="flex flex-wrap gap-1.5 mb-4">
-                  {(project.techStack ?? []).map((tech) => (
-                    <Badge key={tech} variant="outline">
-                      {tech}
-                    </Badge>
-                  ))}
+                  <Badge variant="outline">
+                    {AGENT_TYPE_META[project.agentType ?? '']?.label ?? project.agentType ?? '未指定'}
+                  </Badge>
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-3 gap-2 text-center border-t border-surface-3 pt-4">
+                <div className="grid grid-cols-2 gap-2 text-center border-t border-surface-3 pt-4">
                   <div>
-                    <p className="text-lg font-semibold text-white">
-                      {project.stats?.totalAgents ?? 0}
+                    <p className="text-sm font-semibold text-white truncate">
+                      {formatRelativeTime(project.createdAt)}
                     </p>
-                    <p className="text-xs text-zinc-500">Agents</p>
+                    <p className="text-xs text-zinc-500">创建于</p>
                   </div>
                   <div>
-                    <p className="text-lg font-semibold text-white">
-                      {project.stats?.totalWorkflows ?? 0}
+                    <p className="text-sm font-semibold text-white truncate">
+                      {formatRelativeTime(project.updatedAt)}
                     </p>
-                    <p className="text-xs text-zinc-500">Workflows</p>
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold text-white">
-                      {project.stats?.codeFiles ?? 0}
-                    </p>
-                    <p className="text-xs text-zinc-500">Files</p>
+                    <p className="text-xs text-zinc-500">更新于</p>
                   </div>
                 </div>
               </CardContent>

@@ -27,6 +27,8 @@ import java.util.stream.Collectors;
  * <p>Handled exception types:</p>
  * <ul>
  *   <li>{@link BusinessException} - 400 Bad Request</li>
+ *   <li>{@link UnauthorizedException} - 401 Unauthorized</li>
+ *   <li>{@link IllegalArgumentException} - 400 Bad Request</li>
  *   <li>{@link MethodArgumentNotValidException} - 400 Bad Request (validation errors)</li>
  *   <li>{@link BadCredentialsException} - 401 Unauthorized</li>
  *   <li>{@link AccessDeniedException} - 403 Forbidden</li>
@@ -49,6 +51,35 @@ public class GlobalExceptionHandler {
         log.warn("Business exception: {}", e.getMessage());
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(e.getCode(), e.getMessage()));
+    }
+
+    /**
+     * Handles UnauthorizedException with a 401 status.
+     *
+     * @param e the unauthorized exception
+     * @return error response with 401 status
+     */
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleUnauthorizedException(UnauthorizedException e) {
+        log.warn("Unauthorized: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error(e.getCode(), e.getMessage()));
+    }
+
+    /**
+     * Handles IllegalArgumentException with a 400 status.
+     *
+     * <p>例如分页参数非法：{@code PageRequest.of(-1, size)} 会抛出该异常，
+     * 之前会落到兜底的 500 处理器上。</p>
+     *
+     * @param e the illegal argument exception
+     * @return error response with 400 status
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgumentException(IllegalArgumentException e) {
+        log.warn("Illegal argument: {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error("INVALID_ARGUMENT", e.getMessage()));
     }
 
     /**

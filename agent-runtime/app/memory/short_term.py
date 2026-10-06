@@ -1,7 +1,6 @@
 """Short-term conversation memory with sliding window strategy."""
 
 import logging
-from typing import Any
 
 from app.memory.base import BaseMemory
 from app.models.schemas import Message

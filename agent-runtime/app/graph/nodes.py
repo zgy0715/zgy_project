@@ -12,6 +12,44 @@ from app.graph.state import WorkflowState
 
 logger = logging.getLogger(__name__)
 
+# Memoized agent instances, one per agent type. Building an agent creates a
+# fresh LLMService (and thus an AsyncOpenAI client) that is never closed, so
+# agents are constructed lazily once and reused across node invocations.
+_agent_singletons: dict[str, BaseAgent] = {}
+
+_AGENT_FACTORIES: dict[str, tuple[str, type[BaseAgent]]] = {
+    "coder": ("workflow-coder", CoderAgent),
+    "reviewer": ("workflow-reviewer", ReviewerAgent),
+    "tester": ("workflow-tester", TesterAgent),
+    "deployer": ("workflow-deployer", DeployerAgent),
+}
+
+
+def _get_agent(agent_type: str) -> BaseAgent:
+    """Return the memoized agent instance for the given agent type.
+
+    The instance is created lazily on first use and reused afterwards, so
+    one LLM client is built per agent type instead of one per node call.
+    Per-run agent state (artifacts/thinking_steps) is reset by
+    ``BaseAgent.run()``, so reuse does not leak state between runs.
+
+    Args:
+        agent_type: One of "coder", "reviewer", "tester", "deployer".
+
+    Returns:
+        The shared agent instance for that type.
+
+    Raises:
+        ValueError: If the agent type is unknown.
+    """
+    if agent_type not in _agent_singletons:
+        if agent_type not in _AGENT_FACTORIES:
+            raise ValueError(f"Unknown agent type: {agent_type}")
+        agent_name, factory = _AGENT_FACTORIES[agent_type]
+        _agent_singletons[agent_type] = factory(name=agent_name)
+        logger.info("Created singleton agent %s (%s)", agent_name, agent_type)
+    return _agent_singletons[agent_type]
+
 
 async def coder_node(state: WorkflowState) -> dict[str, Any]:
     """Execute the Coder agent node in the workflow.
@@ -24,7 +62,7 @@ async def coder_node(state: WorkflowState) -> dict[str, Any]:
     """
     logger.info("Executing Coder node for task: %s", state.get("task", ""))
 
-    agent = CoderAgent(name="workflow-coder")
+    agent = _get_agent("coder")
 
     # Build context with downstream outputs from previous agents
     context = dict(state.get("context", {}))
@@ -36,6 +74,8 @@ async def coder_node(state: WorkflowState) -> dict[str, Any]:
         context=context,
     )
 
+    # NOTE: `iteration` counts node executions (not coder retries); the retry
+    # bound in app/graph/edges.py relies on this exact increment.
     return {
         "current_agent": "coder",
         "code_output": result,
@@ -60,7 +100,7 @@ async def reviewer_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Executing Reviewer node")
 
     code_output = state.get("code_output", "")
-    agent = ReviewerAgent(name="workflow-reviewer")
+    agent = _get_agent("reviewer")
 
     # Pass code_output as context for the reviewer
     context = dict(state.get("context", {}))
@@ -95,7 +135,7 @@ async def tester_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Executing Tester node")
 
     code_output = state.get("code_output", "")
-    agent = TesterAgent(name="workflow-tester")
+    agent = _get_agent("tester")
 
     # Pass code_output and review_output as context for the tester
     context = dict(state.get("context", {}))
@@ -132,7 +172,7 @@ async def deployer_node(state: WorkflowState) -> dict[str, Any]:
     logger.info("Executing Deployer node")
 
     code_output = state.get("code_output", "")
-    agent = DeployerAgent(name="workflow-deployer")
+    agent = _get_agent("deployer")
 
     # Pass code_output and test_output as context for the deployer
     context = dict(state.get("context", {}))

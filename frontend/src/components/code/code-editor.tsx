@@ -77,7 +77,7 @@ export function CodeEditor({
         }
       );
     },
-    [handleSave, monacoLanguage]
+    [handleSave]
   );
 
   // Handle content change

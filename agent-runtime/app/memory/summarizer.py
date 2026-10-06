@@ -1,7 +1,6 @@
 """Memory summarizer for compressing conversation history."""
 
 import logging
-from typing import Any
 
 from app.memory.base import BaseMemory
 from app.models.enums import MessageRole

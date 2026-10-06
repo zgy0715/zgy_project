@@ -1,9 +1,9 @@
 """Code semantic search tool that calls the C++ vector engine."""
 
 import logging
-import os
 from typing import Any
 
+from app.config import get_settings
 from app.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -16,17 +16,18 @@ class CodeSearchTool(BaseTool):
     the high-performance C++ vector engine through pybind11 or HTTP API.
     """
 
-    def __init__(self, engine_url: str = "http://localhost:8080") -> None:
+    def __init__(self, engine_url: str | None = None) -> None:
         """Initialize the code search tool.
 
         Args:
-            engine_url: URL of the C++ vector engine service.
+            engine_url: URL of the C++ vector engine service. Defaults to the
+                configured ``VECTOR_ENGINE_URL``.
         """
         super().__init__(
             name="code_search",
             description="Search code semantically using the vector engine.",
         )
-        self.engine_url = engine_url
+        self.engine_url = engine_url or get_settings().vector.engine_url
 
     async def run(
         self,
@@ -55,7 +56,7 @@ class CodeSearchTool(BaseTool):
             if file_pattern:
                 filters["file_pattern"] = file_pattern
 
-            verify_ssl = os.getenv("VECTOR_ENGINE_VERIFY_SSL", "true").lower() != "false"
+            verify_ssl = get_settings().vector.engine_verify_ssl
             async with httpx.AsyncClient(timeout=30.0, verify=verify_ssl) as client:
                 response = await client.post(
                     f"{self.engine_url}/api/v1/search",

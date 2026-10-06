@@ -2,6 +2,7 @@ package com.deepagent.config;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -14,7 +15,8 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Creates a managed gRPC channel with appropriate keep-alive settings
  * for long-running agent tasks. The channel uses plaintext communication
- * in development and can be configured for TLS in production.</p>
+ * unless {@code grpc.client.agent-service.tls-enabled=true} is set, and it is
+ * shut down with the Spring context so the Netty transport does not leak.</p>
  */
 @Slf4j
 @Configuration
@@ -35,6 +37,12 @@ public class GrpcConfig {
     @Value("${grpc.client.agent-service.enable-keep-alive:true}")
     private boolean enableKeepAlive;
 
+    @Value("${grpc.client.agent-service.tls-enabled:false}")
+    private boolean tlsEnabled;
+
+    /** Channel handle kept for deterministic shutdown on context close. */
+    private ManagedChannel managedChannel;
+
     /**
      * Creates a managed gRPC channel for the Python agent service.
      *
@@ -42,15 +50,15 @@ public class GrpcConfig {
      * <ul>
      *   <li>Keep-alive pings to maintain connection</li>
      *   <li>Idle timeout for resource cleanup</li>
-     *   <li>Plaintext negotiation (upgrade to TLS for production)</li>
+     *   <li>Plaintext negotiation by default; TLS when
+     *       {@code grpc.client.agent-service.tls-enabled=true}</li>
      * </ul>
      *
      * @return the configured ManagedChannel
      */
     @Bean
     public ManagedChannel agentServiceChannel() {
-        log.info("Creating gRPC channel to agent service at {}:{}",
-                agentServiceHost, agentServicePort);
+        log.info("Creating gRPC channel to agent service at {}:{}", agentServiceHost, agentServicePort);
 
         var builder = ManagedChannelBuilder
                 .forAddress(agentServiceHost, agentServicePort)
@@ -62,9 +70,37 @@ public class GrpcConfig {
                     .keepAliveWithoutCalls(false);
         }
 
-        // Use plaintext for development; switch to useTransportSecurity() for production
-        builder.usePlaintext();
+        if (tlsEnabled) {
+            builder.useTransportSecurity();
+            log.info("gRPC channel to agent service uses TLS");
+        } else {
+            builder.usePlaintext();
+            log.warn("gRPC channel to agent service is PLAINTEXT; set "
+                    + "grpc.client.agent-service.tls-enabled=true for production");
+        }
 
-        return builder.build();
+        managedChannel = builder.build();
+        return managedChannel;
+    }
+
+    /**
+     * 关闭 gRPC channel：先优雅关闭，超时后强制关闭，并恢复中断标记。
+     */
+    @PreDestroy
+    public void shutdownChannel() {
+        var channel = this.managedChannel;
+        if (channel == null) {
+            return;
+        }
+        channel.shutdown();
+        try {
+            if (!channel.awaitTermination(5, TimeUnit.SECONDS)) {
+                channel.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            channel.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        log.info("gRPC channel to agent service has been shut down");
     }
 }

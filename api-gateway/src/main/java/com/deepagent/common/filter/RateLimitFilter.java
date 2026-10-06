@@ -1,4 +1,4 @@
-﻿package com.deepagent.common.filter;
+package com.deepagent.common.filter;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -30,6 +32,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final ConcurrentHashMap<String, Bucket> inMemoryStore = new ConcurrentHashMap<>();
 
     private final RedisTemplate<String, Object> redisTemplate;
+    private final boolean enabled;
     private final boolean useRedis;
 
     // Auth endpoints: max 10 requests per minute per IP
@@ -40,9 +43,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final int API_MAX_REQUESTS = 100;
     private static final long API_WINDOW_SECONDS = 60;
 
+    // Stale bucket eviction interval (10 minutes)
+    private static final long EVICTION_INTERVAL_NANOS = 10L * 60 * 1_000_000_000L;
+
+    private volatile long lastEvictionNanos;
+
     public RateLimitFilter(@Value("${rate-limit.enabled:true}") boolean enabled,
                            RedisTemplate<String, Object> redisTemplate) {
         this.redisTemplate = redisTemplate;
+        this.enabled = enabled;
         this.useRedis = redisTemplate != null && enabled;
     }
 
@@ -51,6 +60,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain)
             throws ServletException, IOException {
+
+        // Rate limiting can be switched off entirely (local runs, load tests)
+        if (!enabled) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         // Skip rate limiting for WebSocket upgrade requests
         String upgradeHeader = request.getHeader("Upgrade");
@@ -87,11 +102,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     /**
      * Resolve a unique client identifier from IP or authenticated user.
+     *
+     * <p>Reads the authentication from the {@link SecurityContextHolder} instead of
+     * {@code request.getUserPrincipal()} because this filter runs inside the Spring
+     * Security chain before the request is wrapped; anonymous tokens are ignored so
+     * that all unauthenticated callers do not share a single bucket.</p>
      */
     private String resolveClientKey(HttpServletRequest request) {
-        var userPrincipal = request.getUserPrincipal();
-        if (userPrincipal != null) {
-            return "user:" + userPrincipal.getName();
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null
+                && authentication.isAuthenticated()
+                && !(authentication instanceof AnonymousAuthenticationToken)) {
+            return "user:" + authentication.getName();
         }
         String xff = request.getHeader("X-Forwarded-For");
         String ip = (xff != null && !xff.isBlank()) ? xff.split(",")[0].trim() : request.getRemoteAddr();
@@ -105,15 +127,31 @@ public class RateLimitFilter extends OncePerRequestFilter {
         long now = System.nanoTime();
         long windowNanos = windowSeconds * 1_000_000_000L;
 
-        Bucket bucket = inMemoryStore.compute(key, (k, existing) -> {
-            if (existing == null || (now - existing.windowStart) > windowNanos) {
-                return new Bucket(now, 1);
-            }
-            existing.count++;
-            return existing;
-        });
+        evictStaleBuckets(now);
 
-        return bucket.count <= maxRequests;
+        Bucket bucket = inMemoryStore.computeIfAbsent(key, k -> new Bucket(now));
+
+        synchronized (bucket) {
+            if ((now - bucket.windowStart) > windowNanos) {
+                bucket.windowStart = now;
+                bucket.count = 0;
+            }
+            bucket.count++;
+            return bucket.count <= maxRequests;
+        }
+    }
+
+    /**
+     * Removes buckets whose window has long expired to avoid unbounded
+     * memory growth when the filter is keyed by client IP.
+     */
+    private void evictStaleBuckets(long now) {
+        if ((now - lastEvictionNanos) < EVICTION_INTERVAL_NANOS) {
+            return;
+        }
+        lastEvictionNanos = now;
+        long maxAgeNanos = Math.max(AUTH_WINDOW_SECONDS, API_WINDOW_SECONDS) * 2 * 1_000_000_000L;
+        inMemoryStore.entrySet().removeIf(entry -> (now - entry.getValue().windowStart) > maxAgeNanos);
     }
 
     /**
@@ -134,7 +172,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Simple token bucket entry for in-memory rate tracking.
+     * Mutable sliding-window entry for in-memory rate tracking.
+     *
+     * <p>Deliberately a class and not a record: a record's components are final
+     * and cannot be incremented inside {@code ConcurrentHashMap#compute}.</p>
      */
-    private record Bucket(long windowStart, int count) {}
+    private static final class Bucket {
+
+        private volatile long windowStart;
+        private volatile int count;
+
+        private Bucket(long windowStart) {
+            this.windowStart = windowStart;
+            this.count = 0;
+        }
+    }
 }

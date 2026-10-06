@@ -2,13 +2,13 @@ package com.deepagent.project.service;
 
 import com.deepagent.common.exception.BusinessException;
 import com.deepagent.common.response.PageResponse;
+import com.deepagent.common.util.ValidationUtil;
 import com.deepagent.project.dto.ProjectRequest;
 import com.deepagent.project.dto.ProjectResponse;
 import com.deepagent.project.entity.Project;
 import com.deepagent.project.repository.ProjectRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -18,7 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Service for project management operations.
  *
  * <p>Provides CRUD operations for projects with ownership validation.
- * Only the project owner can modify or delete a project.</p>
+ * 所有读取/写入都按 ownerId 限定（{@code findByIdAndOwnerId}），
+ * 非所有者得到与“不存在”一致的 404 语义，避免通过状态码差异探测他人项目 ID。</p>
  */
 @Slf4j
 @Service
@@ -26,16 +27,18 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProjectService {
 
     private final ProjectRepository projectRepository;
+    private final ProjectActivityService projectActivityService;
 
     /**
      * Creates a new project.
      *
      * @param request  the project creation request
      * @param ownerId  the ID of the user creating the project
+     * @param actor    the username recorded in the activity log (may be null)
      * @return the created project response
      */
     @Transactional
-    public ProjectResponse createProject(ProjectRequest request, Long ownerId) {
+    public ProjectResponse createProject(ProjectRequest request, Long ownerId, String actor) {
         var project = Project.builder()
                 .name(request.name())
                 .description(request.description())
@@ -47,20 +50,21 @@ public class ProjectService {
 
         var saved = projectRepository.save(project);
         log.info("Project created: id={}, name={}, owner={}", saved.getId(), saved.getName(), ownerId);
+        projectActivityService.record(saved.getId(), "PROJECT_CREATED", saved.getName(), actor);
         return toResponse(saved);
     }
 
     /**
-     * Retrieves a project by ID.
+     * Retrieves a project by ID, scoped to its owner.
      *
      * @param projectId the project ID
+     * @param ownerId   the requesting user's ID
      * @return the project response
-     * @throws BusinessException if the project is not found
+     * @throws BusinessException if the project does not exist or is not owned by the user
      */
     @Transactional(readOnly = true)
-    public ProjectResponse getProject(Long projectId) {
-        var project = findProjectOrThrow(projectId);
-        return toResponse(project);
+    public ProjectResponse getProject(Long projectId, Long ownerId) {
+        return toResponse(findOwnedProjectOrThrow(projectId, ownerId));
     }
 
     /**
@@ -68,11 +72,12 @@ public class ProjectService {
      *
      * @param ownerId the owner's user ID
      * @param page    the page number (0-based)
-     * @param size    the page size
+     * @param size    the page size (1-100)
      * @return paginated project responses
      */
     @Transactional(readOnly = true)
     public PageResponse<ProjectResponse> listProjects(Long ownerId, int page, int size) {
+        ValidationUtil.validatePagination(page, size);
         var pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         var projectPage = projectRepository.findByOwnerId(ownerId, pageable);
         return PageResponse.from(projectPage.map(this::toResponse));
@@ -84,13 +89,13 @@ public class ProjectService {
      * @param projectId the project ID
      * @param request   the update request
      * @param ownerId   the owner's user ID (for authorization)
+     * @param actor     the username recorded in the activity log (may be null)
      * @return the updated project response
      * @throws BusinessException if the project is not found or the user is not the owner
      */
     @Transactional
-    public ProjectResponse updateProject(Long projectId, ProjectRequest request, Long ownerId) {
-        var project = findProjectOrThrow(projectId);
-        validateOwnership(project, ownerId);
+    public ProjectResponse updateProject(Long projectId, ProjectRequest request, Long ownerId, String actor) {
+        var project = findOwnedProjectOrThrow(projectId, ownerId);
 
         if (request.name() != null) {
             project.setName(request.name());
@@ -107,6 +112,7 @@ public class ProjectService {
 
         var saved = projectRepository.save(project);
         log.info("Project updated: id={}", saved.getId());
+        projectActivityService.record(saved.getId(), "PROJECT_UPDATED", saved.getName(), actor);
         return toResponse(saved);
     }
 
@@ -115,41 +121,35 @@ public class ProjectService {
      *
      * @param projectId the project ID
      * @param ownerId   the owner's user ID (for authorization)
+     * @param actor     the username recorded in the activity log (may be null)
      * @throws BusinessException if the project is not found or the user is not the owner
      */
     @Transactional
-    public void deleteProject(Long projectId, Long ownerId) {
-        var project = findProjectOrThrow(projectId);
-        validateOwnership(project, ownerId);
+    public void deleteProject(Long projectId, Long ownerId, String actor) {
+        var project = findOwnedProjectOrThrow(projectId, ownerId);
 
         project.setStatus(Project.Status.DELETED);
         projectRepository.save(project);
         log.info("Project deleted: id={}", projectId);
+        projectActivityService.record(projectId, "PROJECT_DELETED", project.getName(), actor);
     }
 
     /**
-     * Finds a project by ID or throws a BusinessException.
+     * Finds a project by ID and owner, or throws a BusinessException.
+     *
+     * <p>是唯一允许的项目读取入口：service 层也做归属校验，避免绕过 controller 的调用方越权。</p>
      *
      * @param projectId the project ID
+     * @param ownerId   the owner's user ID
      * @return the project entity
-     * @throws BusinessException if not found
+     * @throws BusinessException if not found or not owned by the user
      */
-    private Project findProjectOrThrow(Long projectId) {
-        return projectRepository.findById(projectId)
-                .orElseThrow(() -> new BusinessException("Project not found: " + projectId));
-    }
-
-    /**
-     * Validates that the given user is the owner of the project.
-     *
-     * @param project the project entity
-     * @param ownerId the user ID to validate
-     * @throws BusinessException if the user is not the owner
-     */
-    private void validateOwnership(Project project, Long ownerId) {
-        if (!project.getOwnerId().equals(ownerId)) {
-            throw new BusinessException("You are not authorized to modify this project");
+    private Project findOwnedProjectOrThrow(Long projectId, Long ownerId) {
+        if (ownerId == null) {
+            throw new BusinessException("Authentication required");
         }
+        return projectRepository.findByIdAndOwnerId(projectId, ownerId)
+                .orElseThrow(() -> new BusinessException("Project not found: " + projectId));
     }
 
     /**

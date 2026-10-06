@@ -2,18 +2,12 @@ package com.deepagent.scheduler.service;
 
 import com.deepagent.common.exception.BusinessException;
 import com.deepagent.orchestrator.service.AgentOrchestrator;
-import com.deepagent.scheduler.entity.Task;
-import com.deepagent.scheduler.repository.TaskRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
@@ -31,6 +25,10 @@ import java.util.concurrent.Executors;
  *   <li>Wait for all tasks in a level to complete before proceeding</li>
  *   <li>If any task fails, mark remaining tasks as SKIPPED</li>
  * </ol>
+ *
+ * <p>事务边界：本类不标注 {@code @Transactional}。任务状态变更全部委托给
+ * {@link TaskService} 的短事务方法，既避免自调用导致注解失效，也避免在
+ * 长达 10 分钟的 agent 调用期间持有数据库事务。</p>
  */
 @Slf4j
 @Service
@@ -38,15 +36,16 @@ import java.util.concurrent.Executors;
 public class DagScheduler {
 
     private final DagParser dagParser;
-    private final TaskRepository taskRepository;
+    private final TaskService taskService;
     private final AgentOrchestrator agentOrchestrator;
 
     /**
      * Executes all tasks in a project according to DAG dependencies.
      *
-     * <p>This method runs asynchronously using virtual threads. It first validates
-     * the DAG, then executes tasks level by level with parallel execution
-     * within each level.</p>
+     * <p>This method runs asynchronously ({@code @EnableAsync} on the application class,
+     * {@code spring.threads.virtual.enabled=true} so the executor uses virtual threads).
+     * It first validates the DAG, then executes tasks level by level with parallel
+     * execution within each level.</p>
      *
      * @param projectId the project ID whose tasks to execute
      */
@@ -86,10 +85,6 @@ public class DagScheduler {
     /**
      * Executes all tasks in a single level concurrently using virtual threads.
      *
-     * <p>All tasks in a level are submitted to a virtual thread executor.
-     * If any task fails, the method throws a BusinessException to halt
-     * further level execution.</p>
-     *
      * @param projectId the project ID
      * @param taskIds   the task IDs at this execution level
      * @throws BusinessException if any task in the level fails
@@ -104,61 +99,51 @@ public class DagScheduler {
             for (var future : futures) {
                 try {
                     future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new BusinessException("Task execution interrupted: " + e.getMessage());
                 } catch (Exception e) {
-                    throw new BusinessException("Task execution failed: " + e.getMessage());
+                    throw new BusinessException("Task execution failed: " + rootMessage(e));
                 }
             }
         }
     }
 
     /**
-     * Executes a single task by invoking the agent orchestrator.
+     * Executes a single task by invoking the agent orchestrator, retrying up to
+     * {@code maxRetries} times.
      *
-     * <p>Updates the task status through its lifecycle:
-     * PENDING -> RUNNING -> SUCCESS/FAILED</p>
+     * <p>状态流转：PENDING -> RUNNING -> SUCCESS，失败则重试，重试耗尽后 FAILED。</p>
      *
      * @param taskId the task ID to execute
+     * @throws BusinessException if the task fails after all retries
      */
-    @Transactional
     public void executeTask(Long taskId) {
-        var task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new BusinessException("Task not found: " + taskId));
+        var task = taskService.requireTask(taskId);
+        int maxRetries = task.getMaxRetries() != null ? Math.max(task.getMaxRetries(), 0) : 0;
 
-        try {
-            // Mark as running
-            task.setStatus(Task.Status.RUNNING);
-            task.setStartedAt(LocalDateTime.now());
-            taskRepository.save(task);
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            taskService.markRunning(taskId);
+            try {
+                log.debug("Executing task: id={}, name={}, attempt={}/{}",
+                        task.getId(), task.getName(), attempt + 1, maxRetries + 1);
 
-            log.debug("Executing task: id={}, name={}", task.getId(), task.getName());
+                var result = agentOrchestrator.executeAgentTask(
+                        task.getProjectId(), task.getId(), task.getAgentType(), task.getInput());
 
-            // Invoke the agent orchestrator
-            var result = agentOrchestrator.executeAgentTask(
-                    task.getProjectId(), task.getId(), task.getAgentType(), task.getInput());
-
-            // Mark as success
-            task.setStatus(Task.Status.SUCCESS);
-            task.setOutput(result);
-            task.setCompletedAt(LocalDateTime.now());
-            taskRepository.save(task);
-
-            log.info("Task completed successfully: id={}", task.getId());
-        } catch (Exception e) {
-            // Handle retry logic
-            var retryCount = task.getRetryCount() != null ? task.getRetryCount() : 0;
-            if (retryCount < task.getMaxRetries()) {
-                task.setRetryCount(retryCount + 1);
-                task.setStatus(Task.Status.PENDING);
-                taskRepository.save(task);
-                log.warn("Task failed, will retry ({}/{}): id={}, error={}",
-                        retryCount + 1, task.getMaxRetries(), task.getId(), e.getMessage());
-            } else {
-                task.setStatus(Task.Status.FAILED);
-                task.setCompletedAt(LocalDateTime.now());
-                task.setOutput("Error: " + e.getMessage());
-                taskRepository.save(task);
-                log.error("Task failed after {} retries: id={}", task.getMaxRetries(), task.getId());
-                throw new BusinessException("Task " + taskId + " failed: " + e.getMessage());
+                taskService.markSuccess(taskId, result);
+                log.info("Task completed successfully: id={}", task.getId());
+                return;
+            } catch (Exception e) {
+                if (attempt < maxRetries) {
+                    taskService.markRetry(taskId, attempt + 1);
+                    log.warn("Task failed, retrying ({}/{}): id={}, error={}",
+                            attempt + 1, maxRetries, taskId, rootMessage(e));
+                } else {
+                    taskService.markFailed(taskId, rootMessage(e));
+                    log.error("Task failed after {} retries: id={}", attempt, taskId);
+                    throw new BusinessException("Task " + taskId + " failed: " + rootMessage(e));
+                }
             }
         }
     }
@@ -170,14 +155,20 @@ public class DagScheduler {
      *
      * @param projectId the project ID
      */
-    @Transactional
     public void markRemainingTasksAsSkipped(Long projectId) {
-        var pendingTasks = taskRepository.findByProjectIdAndStatus(projectId, Task.Status.PENDING);
-        for (var task : pendingTasks) {
-            task.setStatus(Task.Status.SKIPPED);
-            taskRepository.save(task);
+        int skipped = taskService.markPendingTasksAsSkipped(projectId);
+        log.info("Marked {} pending tasks as SKIPPED for project: {}", skipped, projectId);
+    }
+
+    /**
+     * Unwraps nested exception messages so the persisted error is readable.
+     */
+    private String rootMessage(Throwable e) {
+        var cause = e;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
         }
-        log.info("Marked {} pending tasks as SKIPPED for project: {}",
-                pendingTasks.size(), projectId);
+        var message = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
+        return cause == e ? message : e.getMessage() + " -> " + message;
     }
 }

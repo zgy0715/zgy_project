@@ -1,0 +1,40 @@
+# Contents excluded from the Docker build context.
+
+# Version control
+.git
+.gitignore
+
+# Python virtual environments
+.venv
+venv
+env
+ENV
+
+# Python bytecode / caches
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Test / coverage artifacts
+htmlcov
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.tox
+
+# Local environment / secrets
+.env
+.env.*
+
+# Documentation (not needed inside the image)
+*.md
+
+# Local tooling / editor state
+.idea
+.vscode
+*.log

@@ -1,6 +1,8 @@
 """File read/write tools for agent file operations."""
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +11,24 @@ from app.tools.base import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-# Maximum file size in bytes (default: 10 MB)
+# Fallback maximum file size in bytes, used only when the configured
+# security.max_file_size_mb setting cannot be read (default: 10 MB)
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+
+
+def _get_max_file_size_bytes() -> int:
+    """Get the maximum allowed file size in bytes from configuration.
+
+    Fail-safe: falls back to the module default when the setting is absent.
+
+    Returns:
+        The configured maximum file size in bytes.
+    """
+    try:
+        max_file_size_mb = get_settings().security.max_file_size_mb
+    except Exception:
+        return MAX_FILE_SIZE_BYTES
+    return int(max_file_size_mb) * 1024 * 1024
 
 
 def _get_allowed_directories() -> list[str]:
@@ -85,10 +103,11 @@ class FileReadTool(BaseTool):
                 return ToolResult(success=False, error=f"File not found: {path}")
 
             file_size = file_path.stat().st_size
-            if file_size > MAX_FILE_SIZE_BYTES:
+            max_file_size = _get_max_file_size_bytes()
+            if file_size > max_file_size:
                 return ToolResult(
                     success=False,
-                    error=f"File too large: {file_size} bytes (max: {MAX_FILE_SIZE_BYTES} bytes)",
+                    error=f"File too large: {file_size} bytes (max: {max_file_size} bytes)",
                 )
 
             content = file_path.read_text(encoding="utf-8")
@@ -168,16 +187,41 @@ class FileWriteTool(BaseTool):
             )
 
         content_size = len(content.encode('utf-8'))
-        if content_size > MAX_FILE_SIZE_BYTES:
+        max_file_size = _get_max_file_size_bytes()
+        if content_size > max_file_size:
             return ToolResult(
                 success=False,
-                error=f"Content too large: {content_size} bytes (max: {MAX_FILE_SIZE_BYTES} bytes)",
+                error=f"Content too large: {content_size} bytes (max: {max_file_size} bytes)",
             )
 
         try:
             file_path = Path(path)
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding="utf-8")
+
+            # Atomic write: temp file in the same directory, flush + fsync,
+            # then os.replace so a crash can never leave a truncated file.
+            tmp_path: str | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=file_path.parent,
+                    prefix=".tmp-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as tmp_file:
+                    tmp_path = tmp_file.name
+                    tmp_file.write(content)
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
+                os.replace(tmp_path, file_path)
+                tmp_path = None
+            finally:
+                if tmp_path is not None:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
 
             logger.info("Wrote file: %s (%d chars)", path, len(content))
 

@@ -38,6 +38,14 @@ describe('API Contract: Auth endpoints match Java AuthController', () => {
     expect(API_ENDPOINTS.AUTH.ME).toBe(`${authBase}/me`);
   });
 
+  it('PROFILE endpoint matches PUT /auth/profile', () => {
+    expect(API_ENDPOINTS.AUTH.PROFILE).toBe(`${authBase}/profile`);
+  });
+
+  it('CHANGE_PASSWORD endpoint matches POST /auth/change-password', () => {
+    expect(API_ENDPOINTS.AUTH.CHANGE_PASSWORD).toBe(`${authBase}/change-password`);
+  });
+
   it('all auth endpoints are under /auth prefix', () => {
     const authEndpoints = Object.values(API_ENDPOINTS.AUTH);
     for (const endpoint of authEndpoints) {
@@ -157,6 +165,13 @@ describe('API Contract: Agent endpoints match Java AgentController', () => {
     );
   });
 
+  it('EXECUTE endpoint matches POST /agents/{id}/execute (not /chat)', () => {
+    expect(API_ENDPOINTS.AGENTS.EXECUTE('agent-1')).toBe(
+      `${agentBase}/agent-1/execute`
+    );
+    expect(API_ENDPOINTS.AGENTS.EXECUTE('agent-1')).not.toContain('/chat');
+  });
+
   it('all agent endpoints are under /agents prefix', () => {
     const endpoints = API_ENDPOINTS.AGENTS;
     const stringEndpoints = Object.values(endpoints).filter(
@@ -194,6 +209,10 @@ describe('API Contract: Workflow endpoints match Java WorkflowController', () =>
     expect(API_ENDPOINTS.WORKFLOWS.TEMPLATES).toBe(`${workflowBase}/templates`);
   });
 
+  it('UPDATE endpoint matches PUT /workflows/{id}', () => {
+    expect(API_ENDPOINTS.WORKFLOWS.UPDATE('wf-1')).toBe(`${workflowBase}/wf-1`);
+  });
+
   it('all workflow endpoints are under /workflows prefix', () => {
     const endpoints = API_ENDPOINTS.WORKFLOWS;
     const stringEndpoints = Object.values(endpoints).filter(
@@ -202,6 +221,16 @@ describe('API Contract: Workflow endpoints match Java WorkflowController', () =>
     for (const endpoint of stringEndpoints) {
       expect(endpoint).toMatch(/^\/workflows/);
     }
+  });
+});
+
+// ============================================================
+// Task Endpoint Contracts
+// ============================================================
+
+describe('API Contract: Task endpoints match Java SchedulerController', () => {
+  it('DETAIL endpoint generates correct path for task ID', () => {
+    expect(API_ENDPOINTS.TASKS.DETAIL('42')).toBe('/tasks/42');
   });
 });
 
